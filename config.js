@@ -1,5 +1,2 @@
-/* Chaves do Supabase deste app.
-   Preencha depois de criar o projeto (Project Settings › API).
-   Enquanto estiverem vazias, o app pede as chaves na primeira tela. */
-window.SUPABASE_URL = '';
-window.SUPABASE_ANON_KEY = '';
+window.SUPABASE_URL = 'https://genhqupgvmjbyvascybk.supabase.co';
+window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlbmhxdXBndm1qYnl2YXNjeWJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyMTMzNTEsImV4cCI6MjEwNTc4OTM1MX0.aRd_jFlLEaEHv07prtwU3xo-tUrHtupp3hAZ-KN-WTs';
