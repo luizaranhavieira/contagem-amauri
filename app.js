@@ -1127,8 +1127,11 @@ function painelAbertas(it) {
     </div>`;
   }).join('');
   return `<div class="abpanel">
-    <div class="small ${isNum(p.taraG) ? 'muted' : ''}" style="${isNum(p.taraG) ? '' : 'color:var(--amber)'}">
-      ${isNum(p.taraG) ? `Tara ${F(p.taraG)} g descontada de cada ${E.s}.` : 'Tara não cadastrada — o peso líquido fica pendente.'}
+    <div class="row between" style="gap:8px;flex-wrap:wrap">
+      <div class="small grow ${isNum(p.taraG) ? 'muted' : ''}" style="${isNum(p.taraG) ? '' : 'color:var(--amber)'}">
+        ${isNum(p.taraG) ? `Tara ${F(p.taraG)} g descontada de cada ${E.s}.` : 'Tara não cadastrada — o peso líquido fica pendente.'}
+      </div>
+      <button class="btn ghost small" style="min-height:40px;flex:0 0 auto" data-act="salvarTara" data-key="${esc(it.key)}">${isNum(p.taraG) ? 'Mudar tara' : 'Cadastrar tara'}</button>
     </div>
     ${linhas || '<div class="small muted">Nenhuma pesagem lançada.</div>'}
     <div class="row">
@@ -1352,6 +1355,7 @@ VIEWS.item = (r) => {
         ${temTara ? `Tara cadastrada: <b>${F(p.taraG)} g</b> — descontada de cada ${E.s}.` : '<b>Tara não cadastrada.</b> Você pode registrar o peso bruto, mas o peso líquido fica pendente até cadastrar a tara.'}<br>
         Pese cada ${E.s} aberta e digite o peso da balança. Pese sempre nas mesmas condições usadas para pesar a garrafa vazia.
       </div>
+      <button class="btn ghost small full" style="min-height:44px" data-act="salvarTara" data-key="${esc(it.key)}">${temTara ? `Atualizar tara (hoje ${F(p.taraG)} g)` : `Pesei a ${E.s} vazia — cadastrar tara`}</button>
       <div id="gl" class="stack">${d.a.map((g, ix) => garrafaHTML(g, ix, it)).join('')}</div>
       <button class="btn big full" data-act="addG">+ ${addLbl}</button>
     </section>` : ''}`}
@@ -1568,6 +1572,40 @@ ACT.limparItem = async () => {
   try {
     await comSync(() => S.db.doc(`contagens/${d.cid}/lanc/${d.amb}`).update({ i: { [d.key]: null } }));
     LS.del(draftKey(d)); S.draft = null; toast('Lançamento apagado'); render();
+  } catch (e) { toast(errMsg(e), 4000); }
+};
+
+/* ---- Cadastrar/atualizar a tara direto da pesagem ---- */
+ACT.salvarTara = async (el) => {
+  const key = el.dataset.key || '';
+  const codigo = key.split('~')[0], vid = key.split('~')[1];
+  const prod = S.produtos.get(codigo);
+  if (!prod) return toast('Produto não encontrado no cadastro');
+  const lista = prod.variantes || [];
+  const v = lista.find((x) => x.id === vid) || lista[0];
+  if (!v) return toast('Variante não encontrada');
+  const atual = isNum(v.taraG) ? v.taraG : null;
+  const txt = await modal({
+    title: atual === null ? 'Cadastrar a tara' : 'Atualizar a tara',
+    body: `<p class="small muted">${esc(prod.descricao)}${v.nome && v.nome !== 'Padrão' ? ' · ' + esc(v.nome) : ''}</p>
+      <label class="f">Peso da garrafa vazia<div class="unitwrap"><input id="m-tara" inputmode="decimal" value="${atual === null ? '' : esc(String(atual).replace('.', ','))}" placeholder="ex.: 305" autocomplete="off"><span class="u">g</span></div></label>
+      <p class="small muted">Pese na mesma condição da contagem (com tampa, se vocês pesam com tampa). Vale para este produto em todos os ambientes; contagens já encerradas não mudam.</p>`,
+    actions: [
+      { label: 'Salvar tara', cls: 'pri',
+        check: (m) => { const r = Calc.parseNum(m.querySelector('#m-tara').value, { thousandsDot: true });
+          if (!r.ok) { toast(r.error); return false; }
+          if (r.empty || !r.value) { toast('Digite o peso da garrafa vazia'); return false; }
+          return true; },
+        collect: (m) => m.querySelector('#m-tara').value },
+      { label: 'Cancelar', value: null, cls: 'ghost' }],
+  });
+  if (!txt) return;
+  const g = Calc.parseNum(txt, { thousandsDot: true }).value;
+  const variantes = lista.map((x) => (x.id === v.id ? { ...x, taraG: g } : x));
+  try {
+    await comSync(() => S.db.doc(`produtos/${codigo}`).update({ variantes, atualizadoEm: Date.now(), atualizadoPor: S.me || '' }));
+    toast(`Tara de ${prod.descricao}: ${F(g)} g ✓`, 3000);
+    render();
   } catch (e) { toast(errMsg(e), 4000); }
 };
 
