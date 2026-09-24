@@ -1145,7 +1145,7 @@ function abResumo(g, it) {
   if (a.erro) return `<span style="color:var(--danger)">${esc(a.erro)}</span>`;
   const partes = [];
   if (it.unidade === 'KG') { if (isNum(a.kg)) partes.push(`${FA(a.kg, 3)} kg`); }
-  else if (isNum(a.volumeMl)) partes.push(`${F(a.volumeMl)} ml na garrafa${isNum(a.fracao) ? ` · ${F(a.fracao * 100)}% da garrafa` : ''}`);
+  else if (isNum(a.volumeMl)) partes.push(`${F(a.volumeMl)} ml na garrafa${isNum(a.fracao) ? ` · ${F(a.fracao * 100)}% de ${F(it.p.volumeMl)} ml` : ''}`);
   else partes.push('falta a tara para calcular');
   if (a.pendencias.length) partes.push(a.pendencias[0]);
   return `<span class="${a.alertas.length ? '' : 'muted'}" ${a.alertas.length ? 'style="color:var(--amber)"' : ''}>${esc(partes.join(' · '))}${a.alertas.length ? ' ⚠' : ''}</span>`;
@@ -1385,7 +1385,7 @@ function garrafaRes(g, it) {
     ['Peso líquido', isNum(a.liquidoG) ? `${FA(a.liquidoG, 1)} g` : '—']];
   if (it.unidade !== 'KG') kv.push(['Líquido na garrafa', isNum(a.volumeMl) ? `${F(a.volumeMl)} ml` : 'pendente']);
   else kv.push(['Quilos', isNum(a.kg) ? `${FA(a.kg, 3)} kg` : '—']);
-  if (isNum(a.fracao)) kv.push(['Restante', `${F(a.fracao * 100)}%`]);
+  if (isNum(a.fracao)) kv.push(['Restante', `${F(a.fracao * 100)}% de ${F(it.p.volumeMl)} ml`]);
   if (it.unidade === 'UNID' && isNum(a.equivUnid)) kv.push(['Equiv. (estim.)', `${FA(a.equivUnid, 2)} un.`]);
   let notes = '';
   if (a.erro) notes += `<div class="note n-err small">${esc(a.erro)}</div>`;
@@ -1663,6 +1663,31 @@ ACT.finalizar = async (el) => {
   finally { S.saving = false; }
 };
 
+/* ---- Reabrir uma contagem encerrada para editar ---- */
+ACT.reabrir = async (el) => {
+  if (!ehGestor()) return toast('Só o gestor reabre uma contagem');
+  const h = contagem(el.dataset.cid);
+  if (!h) return;
+  const outra = S.contagens.find((c) => c.id !== h.id && !fechadaStatus(c.status));
+  if (outra) return toast(`Já existe a contagem de ${dataBR(outra.data)} aberta. Encerre ou exclua ela antes de reabrir esta.`, 5000);
+  const ok = await modal({ title: 'Reabrir contagem?',
+    body: `<p>A contagem de <b>${dataBR(h.data)}</b> volta para <b>em andamento</b> e pode ser editada de novo. Os lançamentos já feitos continuam lá.</p>
+      <p class="small muted">Enquanto estiver aberta, os cálculos voltam a usar o cadastro atual (taras, volumes). Ao encerrar de novo, os parâmetros são congelados outra vez. Se a planilha já foi enviada, gere uma nova depois de fechar.</p>`,
+    actions: [{ label: 'Reabrir', value: true, cls: 'pri' }, { label: 'Cancelar', value: false, cls: 'ghost' }] });
+  if (!ok) return;
+  try {
+    await comSync(() => S.db.doc(`contagens/${h.id}`).update({
+      status: 'andamento', finalizadoEm: null, finalizadoPor: '', obsEnc: '',
+      eventos: [...(h.eventos || []), { t: Date.now(), p: S.me || '', d: 'Contagem reaberta para edição' }].slice(-50),
+      atualizadoEm: Date.now(),
+    }));
+    const loc = S.contagens.find((c) => c.id === h.id);
+    if (loc) { loc.status = 'andamento'; loc.finalizadoEm = null; }  // evita o redirect de volta antes do snapshot chegar
+    toast('Contagem reaberta — pode editar');
+    go(`#/c/${h.id}`);
+  } catch (e) { toast(errMsg(e), 4000); }
+};
+
 /* ---- Linhas do resumo (tela e Excel) ---- */
 function montarResumo(ctx, ambIds) {
   const map = new Map();
@@ -1736,7 +1761,13 @@ VIEWS.resumo = (r) => {
     : '<tr><th>Produto</th><th>Situação</th><th class="n">Fechadas</th><th class="n">Abertas</th><th class="n">Peso líq. abertas (g)</th><th class="n">Vol. est. abertas (L)</th><th class="n">Total</th><th>Pendências / obs.</th></tr>';
   return `${topbar({ back: fech ? '#/hist' : `#/c/${h.id}`, eyebrow: fech ? 'Resumo da contagem' : 'Prévia — contagem em andamento', title: `Contagem de ${dataBR(h.data)}` })}
   <div class="stack" style="margin-top:14px">
-    <div class="row small"><span class="pill ${pill}">${STATUS_LABEL[h.status]}</span><span class="muted">Responsável: <b>${esc(h.responsavel)}</b>${h.finalizadoEm ? ` · encerrada ${horaBR(h.finalizadoEm)}${h.finalizadoPor ? ' por ' + esc(h.finalizadoPor) : ''}` : ''}</span></div>
+    <div class="row between" style="gap:10px;flex-wrap:wrap">
+      <div class="row small" style="gap:8px;flex-wrap:wrap"><span class="pill ${pill}">${STATUS_LABEL[h.status]}</span><span class="muted">Responsável: <b>${esc(h.responsavel)}</b>${h.finalizadoEm ? ` · encerrada ${horaBR(h.finalizadoEm)}${h.finalizadoPor ? ' por ' + esc(h.finalizadoPor) : ''}` : ''}</span></div>
+      ${fech ? `<div class="row" style="gap:8px;flex:0 0 auto">
+        ${ehGestor() ? `<button class="btn ghost small" style="min-height:40px" data-act="reabrir" data-cid="${h.id}">Reabrir para editar</button>` : ''}
+        <button class="btn dan ghost small" style="min-height:40px" data-act="excluirContagem" data-cid="${h.id}">Excluir contagem</button>
+      </div>` : ''}
+    </div>
     ${fech && !S.cur.snap ? '<div class="note n-warn small">Parâmetros congelados não encontrados; os cálculos usam o cadastro atual.</div>' : ''}
     ${!fech ? '<div class="note n-info small">Prévia com o cadastro atual. Os valores podem mudar até a finalização.</div>' : ''}
     ${h.obsEnc ? `<div class="note n-info small"><b>Observação do encerramento:</b> ${esc(h.obsEnc)}</div>` : ''}
@@ -1751,7 +1782,6 @@ VIEWS.resumo = (r) => {
     <div class="seg"><button data-act="resModo" data-k="amb" class="${modo === 'amb' ? 'on' : ''}">Por ambiente</button><button data-act="resModo" data-k="cons" class="${modo === 'cons' ? 'on' : ''}">Consolidado</button></div>
     ${modo === 'amb' ? `<div class="chips">${ambs.map((a) => `<button class="chip ${S.ui.resAmb === a.id ? 'on' : ''}" data-act="resAmb" data-k="${a.id}">${esc(a.nome)}</button>`).join('')}</div>` : '<p class="small muted" style="margin:0">Soma do mesmo produto em todos os ambientes desta contagem. O total só aparece quando todos os ambientes foram contados e calculados.</p>'}
     <div class="tw"><table><thead>${head}</thead><tbody>${tabela}</tbody></table></div>
-    ${fech ? `<button class="btn dan ghost full" data-act="excluirContagem" data-cid="${h.id}">Excluir contagem</button>` : ''}
   </div>`;
 };
 ACT.resModo = (el) => { S.ui.resModo = el.dataset.k; render(); };
@@ -1796,12 +1826,17 @@ async function gerarWorkbook(ctx, scope) {
   for (const a of ambs) temPeso[a.id] = rows.some((row) => row.por[a.id] && row.por[a.id].forma !== 'fechadas');
   const cols = [{ h: 'CÓDIGO', w: 13 }, { h: 'DESCRIÇÃO', w: 46 }, { h: 'TIPO', w: 32 }, { h: 'UNID. DE MEDIDA', w: 15 }];
   const blocos = [];
+  const colIdx = {};   // por ambiente: em que coluna ficou a qtd, o ml e o total
   for (const a of ambs) {
     const ini = cols.length + 1;
     cols.push({ h: 'QTD GARRAFAS', w: 15, amb: a.id, tipo: 'qtd' });
-    if (temPeso[a.id]) cols.push({ h: 'QUANTIDADE DE LÍQUIDO NA GARRAFA (ml)', w: 20, amb: a.id, tipo: 'ml' });
+    colIdx[a.id] = { qtd: cols.length, ml: null, tot: null };
+    if (temPeso[a.id]) { cols.push({ h: 'QUANTIDADE DE LÍQUIDO NA GARRAFA (ml)', w: 20, amb: a.id, tipo: 'ml' }); colIdx[a.id].ml = cols.length; }
+    cols.push({ h: 'TOTAL EM ML (FECHADAS + ABERTAS)', w: 22, amb: a.id, tipo: 'totml' });
+    colIdx[a.id].tot = cols.length;
     blocos.push({ nome: a.nome.toUpperCase(), ini, fim: cols.length });
   }
+  if (multi) cols.push({ h: 'TOTAL GERAL EM ML (TODOS OS AMBIENTES)', w: 22, tipo: 'geral' });
   const ws = wb.addWorksheet('Contagem', { views: [{ state: 'frozen', xSplit: 4, ySplit: 6 }], pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   ws.columns = cols.map((c) => ({ width: c.w }));
   const ultima = cols.length;
@@ -1867,6 +1902,14 @@ async function gerarWorkbook(ctx, scope) {
     r.getCell(2).value = it.descricao + (it.varNome ? ` · ${it.varNome}` : '');
     r.getCell(3).value = it.categoria;
     r.getCell(4).value = it.unidade;
+    for (let x = 1; x <= ultima; x++) {
+      const cell = r.getCell(x);
+      cell.border = borda;
+      cell.font = { size: 11 };
+      cell.alignment = x === 2 || x === 3 ? { horizontal: 'left' } : { horizontal: 'center' };
+      if (linha % 2 === 0 && x > 4) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF7F9F5' } };
+    }
+    const totLinha = {}, pendLinha = {};
     cols.forEach((c, i) => {
       if (!c.amb) return;
       const cell = r.getCell(i + 1);
@@ -1875,19 +1918,51 @@ async function gerarWorkbook(ctx, scope) {
       const rr = x.r;
       if (rr.status === 'nao_contado') { cell.value = null; return; }
       if (c.tipo === 'qtd') { cell.value = x.forma === 'peso' ? null : rr.fechadas; cell.numFmt = '0'; }
-      else {
+      else if (c.tipo === 'ml') {
         cell.numFmt = '#,##0';
         if (!rr.nAbertas || it.unidade === 'KG') cell.value = null;
         else if (isNum(rr.volMl)) cell.value = r3(rr.volMl, 0);
         else { cell.value = 'pendente'; cell.font = { size: 10, italic: true, color: { argb: 'FF8F5A00' } }; }
+      } else {
+        /* TOTAL EM ML = fechadas × volume da garrafa cheia + líquido das abertas */
+        cell.numFmt = '#,##0';
+        cell.font = { size: 11, bold: true };
+        const ix = colIdx[c.amb];
+        const vol = x.p && isNum(x.p.volumeMl) ? x.p.volumeMl : null;
+        const temFech = x.forma !== 'peso';
+        const abertasMl = !rr.nAbertas || it.unidade === 'KG' ? 0 : (isNum(rr.volMl) ? rr.volMl : null);
+        const fechMl = !temFech ? 0 : (rr.fechadas === 0 ? 0 : (isNum(rr.fechadas) && vol !== null ? rr.fechadas * vol : null));
+        if (it.unidade === 'KG') { cell.value = null; return; }
+        // sem volume cadastrado e sem nada aberto: não há ml a somar neste produto
+        if (vol === null && !rr.nAbertas) { cell.value = null; return; }
+        if (fechMl === null || abertasMl === null) {
+          cell.value = 'pendente';
+          cell.font = { size: 10, italic: true, color: { argb: 'FF8F5A00' } };
+          pendLinha[c.amb] = true;
+          return;
+        }
+        const total = r3(fechMl + abertasMl, 0);
+        totLinha[c.amb] = total;
+        if (temFech && vol !== null) {
+          const fq = `${L(ix.qtd)}${linha}*${vol}`;
+          cell.value = { formula: ix.ml ? `${fq}+N(${L(ix.ml)}${linha})` : fq, result: total };
+        } else if (ix.ml) {
+          cell.value = { formula: `N(${L(ix.ml)}${linha})`, result: total };
+        } else cell.value = total;
       }
     });
-    for (let x = 1; x <= ultima; x++) {
-      const cell = r.getCell(x);
-      cell.border = borda;
-      cell.font = { size: 11 };
-      cell.alignment = x === 2 || x === 3 ? { horizontal: 'left' } : { horizontal: 'center' };
-      if (linha % 2 === 0 && x > 4) cell.fill = cell.fill || { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF7F9F5' } };
+    if (multi) {
+      const cell = r.getCell(ultima);
+      cell.numFmt = '#,##0';
+      const comValor = ambs.filter((a) => isNum(totLinha[a.id]));
+      const pend = ambs.some((a) => pendLinha[a.id]);
+      if (it.unidade === 'KG' || (!comValor.length && !pend)) cell.value = null;
+      else if (pend) { cell.value = 'pendente'; cell.font = { size: 10, italic: true, color: { argb: 'FF8F5A00' } }; }
+      else {
+        cell.font = { size: 11, bold: true };
+        cell.value = { formula: comValor.map((a) => `N(${L(colIdx[a.id].tot)}${linha})`).join('+'),
+          result: r3(comValor.reduce((s, a) => s + totLinha[a.id], 0), 0) };
+      }
     }
     linha++;
   }
@@ -2180,7 +2255,7 @@ ACT.cadFiltro = (el) => { S.ui.cadFiltro = el.dataset.k; render(); };
 
 /* ---- Editor de produto ---- */
 const NUMF = [
-  ['volumeMl', 'Volume nominal por embalagem', 'ml', 'Capacidade cheia da embalagem (ex.: 750, 1000). Usada nas fechadas e para calcular quanto resta da garrafa.'],
+  ['volumeMl', 'Volume nominal por embalagem', 'ml', 'Só a bebida que cabe na embalagem cheia (ex.: 750, 1000). Não some a tara aqui. Usada nas fechadas e para calcular quanto resta da garrafa.'],
   ['taraG', 'Tara — embalagem vazia', 'g', 'Peso da embalagem vazia, nas mesmas condições da pesagem.'],
   ['pesoLiqG', 'Peso líquido nominal por embalagem', 'g', 'Para itens em KG (ex.: pacote de 1000 g).'],
 ];
@@ -2242,6 +2317,21 @@ VIEWS.produto = (r) => {
   </div>
   <div class="bar"><div class="in"><button class="btn big" data-act="cancelProd">Descartar</button><button class="btn big pri" data-act="salvarProd" id="b-sp">Salvar produto</button></div></div>`;
 };
+/* Avisa quando o volume nominal parece ter a tara somada (1 g de bebida = 1 ml) */
+function avisoVolume(d, v) {
+  if (d.unidade === 'KG') return '';
+  const n = (k) => parseF(v['_' + k]).value;
+  const vol = n('volumeMl'), tara = n('taraG'), liq = n('pesoLiqG');
+  const num = Calc.isNum;
+  if (!num(vol)) return '';
+  if (num(tara) && num(liq) && Math.abs(vol - (liq + tara)) <= 2)
+    return `<div class="note n-warn small">O volume nominal (${F(vol)} ml) é igual ao peso líquido + a tara (${F(liq)} + ${F(tara)} g). Aqui entra <b>só a bebida</b>: provavelmente o certo é <b>${F(liq)} ml</b>. Com ${F(vol)} ml o "restante da garrafa" sai menor do que é.</div>`;
+  if (num(liq) && Math.abs(vol - liq) > 2)
+    return `<div class="note n-warn small">Volume nominal ${F(vol)} ml e peso líquido nominal ${F(liq)} g estão diferentes. Como 1 g de bebida = 1 ml, os dois deveriam bater — confira qual está certo.</div>`;
+  if (num(tara) && vol <= tara)
+    return `<div class="note n-warn small">O volume nominal (${F(vol)} ml) está menor que a tara (${F(tara)} g). Confira: no volume vai só a bebida da garrafa cheia.</div>`;
+  return '';
+}
 function varHTML(d, v, ix) {
   const pend = new Set(Calc.camposPendentes(d, v));
   const need = (k) => ({ taraG: 'tara', volumeMl: 'volume nominal', pesoLiqG: 'peso líquido nominal' }[k]);
@@ -2256,6 +2346,7 @@ function varHTML(d, v, ix) {
       <span class="hint">${v.notas && v.notas[k] ? `<b>${esc(v.notas[k])}.</b> ` : ''}${hint}</span></label>`).join('')}</div>
     ${d.unidade !== 'KG' && d.forma !== 'fechadas' ? `<div class="small muted">Cálculo das abertas: <b>líquido na garrafa (ml) = peso da garrafa aberta − tara</b>. Sem a tara cadastrada, o app guarda o peso e marca “conversão pendente”.</div>` : ''}
     <label class="check"><input type="checkbox" data-ch="vfc" data-ix="${ix}" data-k="ativo" ${v.ativo !== false ? 'checked' : ''}> Variante ativa</label>
+    ${avisoVolume(d, v)}
     ${pend.size ? `<div class="note n-warn small">Falta: ${[...pend].join(', ')}</div>` : `<div class="note n-ok small">Parâmetros completos.</div>`}
   </div>`;
 }
