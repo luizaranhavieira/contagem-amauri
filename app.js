@@ -726,6 +726,25 @@ document.addEventListener('change', (ev) => {
 ACT.back = (el) => { go(el.dataset.to || '#/'); };
 ACT.go = (el) => go(el.dataset.to);
 
+/* ----- bibliotecas pesadas: só carrega quando precisa (Excel) ----- */
+const LIBS = {
+  ExcelJS: 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js',
+  XLSX: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+};
+const libPend = {};
+function carregarLib(nome) {
+  if (window[nome]) return Promise.resolve(window[nome]);
+  if (libPend[nome]) return libPend[nome];
+  libPend[nome] = new Promise((ok, err) => {
+    const s = document.createElement('script');
+    s.src = LIBS[nome]; s.async = true;
+    s.onload = () => (window[nome] ? ok(window[nome]) : err(new Error('lib vazia')));
+    s.onerror = () => { libPend[nome] = null; err(new Error('sem internet para baixar a biblioteca')); };
+    document.head.appendChild(s);
+  });
+  return libPend[nome];
+}
+
 /* ----- boot ----- */
 async function boot() {
   render();
@@ -1897,11 +1916,12 @@ INP.expAmb = (el) => { S.ui.expAmb = el.value; };
 
 /* ===== Excel ===== */
 ACT.excel = async (el) => {
-  if (typeof ExcelJS === 'undefined') return toast('Biblioteca de Excel não carregou. Recarregue a página.', 4000);
   if (!S.dl) return toast('Download indisponível nesta visualização.', 4000);
   const ctx = ctxAtual(); const scope = ($('#exp-amb') && $('#exp-amb').value) || 'todos';
-  el.disabled = true; el.textContent = 'Gerando…';
+  el.disabled = true; el.textContent = 'Preparando…';
   try {
+    await carregarLib('ExcelJS');
+    el.textContent = 'Gerando…';
     const { wb, nome } = await gerarWorkbook(ctx, scope);
     const buf = await wb.xlsx.writeBuffer();
     await S.dl.save({ filename: nome, data: new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }) });
@@ -2655,13 +2675,15 @@ function viewImportar() {
   }
   return `<div class="stack" style="margin-top:14px">
     <p class="small muted" style="margin:0">Use a planilha no formato da “Contagem bebidas Amauri” (aba IMPRIMIR: Código, Descrição, Tipo, Unid. de medida). Produtos são identificados pelo código — nada é duplicado.</p>
-    ${typeof XLSX === 'undefined' ? '<div class="note n-err">Biblioteca de Excel não carregou. Recarregue a página.</div>' : `<label class="f">Arquivo .xlsx<input type="file" id="imp-file" accept=".xlsx,.xls" data-ch="impFile"></label>`}
+    <label class="f">Arquivo .xlsx<input type="file" id="imp-file" accept=".xlsx,.xls" data-ch="impFile"></label>
     ${prev}
   </div>`;
 }
 INP.impFile = async (el) => {
   const f = el.files && el.files[0]; if (!f) return;
   try {
+    toast('Lendo a planilha…', 2500);
+    await carregarLib('XLSX');
     const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
     let res = null, aba = null;
     const ordem = [...wb.SheetNames].sort((a, b) => (Defaults.norm(b) === 'IMPRIMIR') - (Defaults.norm(a) === 'IMPRIMIR'));
