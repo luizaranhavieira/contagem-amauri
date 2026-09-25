@@ -1284,6 +1284,20 @@ function miniHTML(o) {
   const letra = (o.descricao || '?').trim().charAt(0).toUpperCase();
   return `<span class="ini">${esc(letra)}</span>`;
 }
+/* confere se o link colado abre mesmo como imagem (link de página de busca não abre) */
+function abreComoImagem(url) {
+  return new Promise((ok) => {
+    if (!/^https?:\/\//i.test(url)) return ok(false);
+    let fim = false;
+    const i = new Image();
+    const decide = (v) => { if (!fim) { fim = true; ok(v); } };
+    i.onload = () => decide(i.naturalWidth > 0);
+    i.onerror = () => decide(false);
+    i.referrerPolicy = 'no-referrer';
+    i.src = url;
+    setTimeout(() => decide(false), 6000);
+  });
+}
 /* reduz a imagem antes de guardar: miniatura leve, boa para reconhecer na prateleira */
 async function miniatura(file, max = 200, q = 0.62) {
   const url = URL.createObjectURL(file);
@@ -1328,6 +1342,13 @@ ACT.fotoItem = async (el) => {
       { label: 'Cancelar', value: null, cls: 'ghost' }],
   });
   if (!r) return;
+  if (!r.remover && r.url && r.url !== (prod.fotoUrl || '') && !(await abreComoImagem(r.url))) {
+    const ok = await modal({ title: 'Esse link não abriu como imagem',
+      body: `<p>O endereço colado não é o de uma imagem — geralmente é o link da <b>página</b> de busca ou da loja.</p>
+        <p class="small muted">No celular: segure o dedo na imagem e escolha <b>“Copiar endereço da imagem”</b> (termina em .jpg, .png ou .webp). Mais garantido ainda: <b>baixe a imagem</b> e use “Tirar foto ou escolher do celular” — aí ela fica guardada no app e aparece mesmo sem internet.</p>`,
+      actions: [{ label: 'Voltar e corrigir', value: false, cls: 'pri' }, { label: 'Salvar assim mesmo', value: true, cls: 'ghost' }] });
+    if (!ok) return;
+  }
   const patch = { atualizadoEm: Date.now(), atualizadoPor: S.me || '' };
   if (r.remover) { patch.fotoMini = null; patch.fotoUrl = ''; }
   else if (r.mini || r.url !== (prod.fotoUrl || '')) {
