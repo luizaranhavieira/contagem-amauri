@@ -629,7 +629,8 @@ function itemVivo(prod, v, cfg, key) {
   const nv = (prod.variantes || []).filter((x) => x.ativo !== false).length;
   return { key, codigo: prod.codigo, descricao: prod.descricao, varNome: nv > 1 || (prod.variantes || []).length > 1 ? v.nome : '',
     varNomeFull: v.nome, categoria: prod.categoria || 'SEM CATEGORIA', unidade: prod.unidade, formaProd: prod.forma,
-    forma: formaEfetiva(prod.forma, cfg && cfg.abertas), embalagem: v.embalagem || 'garrafa', p: paramsDe(v), foto: prod.foto || null, obsProd: prod.obs || '' };
+    forma: formaEfetiva(prod.forma, cfg && cfg.abertas), embalagem: v.embalagem || 'garrafa', p: paramsDe(v), foto: prod.foto || null,
+    fotoMini: prod.fotoMini || null, fotoUrl: prod.fotoUrl || '', obsProd: prod.obs || '' };
 }
 function ctxAtual() {
   const h = contagem(S.cur.cid);
@@ -1043,6 +1044,7 @@ function listaHTML(lista, r) {
        <button class="btn qadd" data-act="gqaddFast" data-key="${esc(it.key)}" aria-label="Adicionar mais uma aberta de ${esc(it.descricao)}">${ICON.mais}</button>`;
     out += `<div class="li qrow ${rr.status !== 'nao_contado' ? 'feito' : ''}">
       ${statusDot(it)}
+      <button class="qthumb" data-act="fotoItem" data-key="${esc(it.key)}" aria-label="Foto de ${esc(it.descricao)}">${miniHTML(it)}</button>
       <button class="qname" data-act="abrirItem" data-key="${esc(it.key)}">
         <span class="nm">${esc(it.descricao)}${it.varNome ? ` · <span class="muted">${esc(it.varNome)}</span>` : ''}</span><br>
         <span class="meta">${esc(it.codigo)} · ${it.unidade}${rr.status === 'sem_estoque' ? ' · sem estoque' : ''}${rr.pendencias.length && rr.status !== 'nao_contado' ? ' · cálculo pendente' : ''}</span>
@@ -1274,6 +1276,75 @@ ACT.abrirItem = (el) => {
   go(`#/c/${R.cid}/a/${R.amb}/i/${encodeURIComponent(el.dataset.key)}`);
 };
 
+/* ===== Foto do produto (miniatura na lista) ===== */
+function fotoSrc(o) { return (o && (o.fotoMini || o.fotoUrl)) || ''; }
+function miniHTML(o) {
+  const src = fotoSrc(o);
+  if (src) return `<img src="${esc(src)}" alt="" loading="lazy">`;
+  const letra = (o.descricao || '?').trim().charAt(0).toUpperCase();
+  return `<span class="ini">${esc(letra)}</span>`;
+}
+/* reduz a imagem antes de guardar: miniatura leve, boa para reconhecer na prateleira */
+async function miniatura(file, max = 200, q = 0.62) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, err) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => err(new Error('imagem inválida')); i.src = url; });
+    const f = Math.min(1, max / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * f)), h = Math.max(1, Math.round(img.height * f));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    return c.toDataURL('image/jpeg', q);
+  } finally { URL.revokeObjectURL(url); }
+}
+ACT.fotoItem = async (el) => {
+  const codigo = (el.dataset.key || '').split('~')[0];
+  const prod = S.produtos.get(codigo);
+  if (!prod) return toast('Produto não encontrado no cadastro');
+  let nova = null;
+  const atual = fotoSrc(prod);
+  const r = await modal({
+    title: 'Foto do produto',
+    body: `<p class="small muted">${esc(prod.descricao)}</p>
+      <div id="fpv" class="stack" style="align-items:center">${atual ? `<img src="${esc(atual)}" alt="" style="max-width:150px;border-radius:12px">` : '<div class="small muted">Sem foto por enquanto.</div>'}</div>
+      <label class="f">Tirar foto ou escolher do celular<input type="file" id="f-file" accept="image/*" capture="environment"></label>
+      <label class="f">Ou colar o link de uma imagem<input id="f-url" value="${esc(prod.fotoUrl || '')}" placeholder="https://..." autocomplete="off" inputmode="url"></label>
+      <p class="small muted">A foto entra reduzida, só para reconhecer o produto na prateleira. Link de outro site depende da internet para aparecer.</p>`,
+    onOpen: (m) => {
+      const inp = m.querySelector('#f-file');
+      if (!inp || inp.dataset.on) return;
+      inp.dataset.on = '1';
+      inp.addEventListener('change', async () => {
+        const f = inp.files && inp.files[0];
+        if (!f) return;
+        try {
+          nova = await miniatura(f);
+          m.querySelector('#fpv').innerHTML = `<img src="${nova}" alt="" style="max-width:150px;border-radius:12px">`;
+        } catch (e) { toast('Não consegui ler essa imagem'); }
+      });
+    },
+    actions: [
+      { label: 'Salvar foto', cls: 'pri', collect: (m) => ({ mini: nova, url: m.querySelector('#f-url').value.trim() }) },
+      { label: 'Tirar a foto do produto', cls: 'ghost dan', value: { remover: true } },
+      { label: 'Cancelar', value: null, cls: 'ghost' }],
+  });
+  if (!r) return;
+  const patch = { atualizadoEm: Date.now(), atualizadoPor: S.me || '' };
+  if (r.remover) { patch.fotoMini = null; patch.fotoUrl = ''; }
+  else if (r.mini || r.url !== (prod.fotoUrl || '')) {
+    if (r.mini) patch.fotoMini = r.mini;
+    patch.fotoUrl = r.url;
+  } else return;
+  try {
+    await comSync(() => S.db.doc(`produtos/${codigo}`).update(patch));
+    if (S.ui.pdraft && S.ui.pdraft.codigo === codigo) {
+      if ('fotoMini' in patch) S.ui.pdraft.fotoMini = patch.fotoMini;
+      S.ui.pdraft.fotoUrl = patch.fotoUrl;
+    }
+    toast(r.remover ? 'Foto removida' : 'Foto salva ✓');
+    render();
+  } catch (e) { toast(errMsg(e), 4000); }
+};
+
 /* ===== Lançamento de um item ===== */
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const numIn = (n) => (isNum(n) ? String(n).replace('.', ',') : '');
@@ -1334,7 +1405,8 @@ VIEWS.item = (r) => {
   <div class="stack" style="margin-top:14px">
     ${d.restored ? '<div class="note n-info">Rascunho não salvo recuperado deste aparelho. Confira e salve.</div>' : ''}
     ${d.remote ? `<div class="note n-warn">Este item foi alterado por ${esc(d.remote.p || 'outra pessoa')} às ${horaBR(d.remote.u)}. Seus dados não salvos foram mantidos na tela; ao salvar, eles substituem o outro lançamento.</div>` : ''}
-    ${it.foto || it.obsProd ? `<div class="row">${it.foto ? `<img class="thumb" src="/_blob/${esc(it.foto)}" alt="">` : ''}${it.obsProd ? `<div class="small muted grow">${esc(it.obsProd)}</div>` : ''}</div>` : ''}
+    <div class="row"><button class="qthumb" style="width:56px;height:56px;border-radius:12px" data-act="fotoItem" data-key="${esc(it.key)}" aria-label="Foto do produto">${miniHTML(it)}</button>
+      ${it.obsProd ? `<div class="small muted grow">${esc(it.obsProd)}</div>` : '<span class="small muted grow">Toque na imagem para tirar ou trocar a foto.</span>'}</div>
     ${e ? `<div class="row small"><span class="pill ${e.s ? 'p-zero' : 'p-ok'}">${e.s ? 'Sem estoque' : 'Contado'}</span><span class="muted">por ${esc(e.p || '—')} · ${horaBR(e.u)}</span></div>` : '<div class="row small"><span class="pill p-pend">Não contado</span></div>'}
 
     <button class="btn big full ${d.s ? 'warn' : ''}" data-act="semEstoque" aria-pressed="${d.s}">${d.s ? '✓ Sem estoque (quantidade zero) — toque para desfazer' : 'Sem estoque'}</button>
@@ -2280,10 +2352,10 @@ function cadListaHTML(lista) {
   for (const p of lista.slice(0, 400)) {
     if (p.categoria !== cat) { if (open) out += '</div>'; cat = p.categoria; out += `<div class="eyebrow" style="margin:14px 0 6px">${esc(cat)}</div><div class="list">`; open = true; }
     const n = pendCount(p);
-    out += `<button class="li" data-act="go" data-to="#/cad/p/${encodeURIComponent(p.codigo)}">
-      ${p.foto ? `<img class="thumb" style="width:40px;height:40px" src="/_blob/${esc(p.foto)}" alt="">` : ''}
-      <span class="grow"><span class="nm">${esc(p.descricao)}</span><br><span class="meta">${esc(p.codigo)} · ${p.unidade} · ${FORMA_LABEL[p.forma]}${(p.variantes || []).length > 1 ? ` · ${(p.variantes || []).length} variantes` : ''}</span></span>
-      ${p.ativo === false ? '<span class="pill p-pend">Inativo</span>' : n ? `<span class="pill p-warn">${n} pendente${n > 1 ? 's' : ''}</span>` : '<span class="pill p-ok">Completo</span>'}</button>`;
+    out += `<div class="li">
+      <button class="qthumb" data-act="fotoItem" data-key="${esc(p.codigo)}" aria-label="Foto de ${esc(p.descricao)}">${miniHTML(p)}</button>
+      <button class="grow" style="background:none;border:0;padding:0;text-align:left;font:inherit;color:inherit" data-act="go" data-to="#/cad/p/${encodeURIComponent(p.codigo)}"><span class="nm">${esc(p.descricao)}</span><br><span class="meta">${esc(p.codigo)} · ${p.unidade} · ${FORMA_LABEL[p.forma]}${(p.variantes || []).length > 1 ? ` · ${(p.variantes || []).length} variantes` : ''}</span></button>
+      ${p.ativo === false ? '<span class="pill p-pend">Inativo</span>' : n ? `<span class="pill p-warn">${n} pendente${n > 1 ? 's' : ''}</span>` : '<span class="pill p-ok">Completo</span>'}</div>`;
   }
   return (out + (open ? '</div>' : '')) || '<p class="muted">Nenhum produto.</p>';
 }
@@ -2347,8 +2419,9 @@ VIEWS.produto = (r) => {
 
     <section class="card stack">
       <h3>Foto e observações</h3>
-      ${d.foto ? `<img src="/_blob/${esc(d.foto)}" alt="" style="max-width:160px;border-radius:12px">` : ''}
-      ${S.assets ? `<label class="f">Foto <span class="hint">opcional</span><input type="file" id="p-foto" accept="image/*" data-ch="pfoto"></label>${d.foto ? '<button class="btn ghost" data-act="rmFoto">Remover foto</button>' : ''}` : '<p class="small muted" style="margin:0">Envio de fotos disponível para quem tem permissão de edição do app.</p>'}
+      ${fotoSrc(d) ? `<img src="${esc(fotoSrc(d))}" alt="" style="max-width:160px;border-radius:12px">` : ''}
+      ${d._novo ? '<p class="small muted" style="margin:0">Salve o produto primeiro; depois toque na miniatura dele na lista para pôr a foto.</p>'
+        : `<button class="btn ghost full" data-act="fotoItem" data-key="${esc(d.codigo)}">${fotoSrc(d) ? 'Trocar a foto' : 'Tirar foto ou colar link de imagem'}</button>`}
       <label class="f">Observações<textarea id="p-obs" data-in="pf" data-k="obs">${esc(d.obs || '')}</textarea></label>
       ${d.origem ? `<div class="tiny muted">Origem: ${esc(d.origem)}</div>` : ''}
     </section>
@@ -2455,7 +2528,7 @@ ACT.salvarProd = async (el) => {
   });
   if (errs.length) { await modal({ title: 'Revise o cadastro', body: `<div class="note n-err">${errs.map(esc).join('<br>')}</div>`, actions: [{ label: 'Voltar', value: true, cls: 'pri' }] }); return; }
   const doc = { codigo, descricao: d.descricao.trim(), categoria: String(d.categoria || '').trim().toUpperCase(), marca: String(d.marca || '').trim(), unidade: d.unidade, forma: d.forma,
-    amb: d.amb || {}, foto: d.foto || null, obs: String(d.obs || '').trim(), ativo: d.ativo !== false, origem: d.origem || (d._novo ? 'Cadastro manual' : ''),
+    amb: d.amb || {}, foto: d.foto || null, fotoMini: d.fotoMini || null, fotoUrl: d.fotoUrl || '', obs: String(d.obs || '').trim(), ativo: d.ativo !== false, origem: d.origem || (d._novo ? 'Cadastro manual' : ''),
     variantes: vars, criadoEm: d.criadoEm || Date.now(), atualizadoEm: Date.now(), atualizadoPor: S.me || '' };
   S.saving = true; el.disabled = true;
   try {
