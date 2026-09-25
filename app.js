@@ -1284,20 +1284,6 @@ function miniHTML(o) {
   const letra = (o.descricao || '?').trim().charAt(0).toUpperCase();
   return `<span class="ini">${esc(letra)}</span>`;
 }
-/* confere se o link colado abre mesmo como imagem (link de página de busca não abre) */
-function abreComoImagem(url) {
-  return new Promise((ok) => {
-    if (!/^https?:\/\//i.test(url)) return ok(false);
-    let fim = false;
-    const i = new Image();
-    const decide = (v) => { if (!fim) { fim = true; ok(v); } };
-    i.onload = () => decide(i.naturalWidth > 0);
-    i.onerror = () => decide(false);
-    i.referrerPolicy = 'no-referrer';
-    i.src = url;
-    setTimeout(() => decide(false), 6000);
-  });
-}
 /* reduz a imagem antes de guardar: miniatura leve, boa para reconhecer na prateleira */
 async function miniatura(file, max = 200, q = 0.62) {
   const url = URL.createObjectURL(file);
@@ -1321,8 +1307,7 @@ ACT.fotoItem = async (el) => {
     body: `<p class="small muted">${esc(prod.descricao)}</p>
       <div id="fpv" class="stack" style="align-items:center">${atual ? `<img src="${esc(atual)}" alt="" style="max-width:150px;border-radius:12px">` : '<div class="small muted">Sem foto por enquanto.</div>'}</div>
       <label class="f">Tirar foto ou escolher do celular<input type="file" id="f-file" accept="image/*" capture="environment"></label>
-      <label class="f">Ou colar o link de uma imagem<input id="f-url" value="${esc(prod.fotoUrl || '')}" placeholder="https://..." autocomplete="off" inputmode="url"></label>
-      <p class="small muted">A foto entra reduzida, só para reconhecer o produto na prateleira. Link de outro site depende da internet para aparecer.</p>`,
+      <p class="small muted">A foto entra reduzida e fica guardada no app, só para reconhecer o produto na prateleira.</p>`,
     onOpen: (m) => {
       const inp = m.querySelector('#f-file');
       if (!inp || inp.dataset.on) return;
@@ -1337,29 +1322,20 @@ ACT.fotoItem = async (el) => {
       });
     },
     actions: [
-      { label: 'Salvar foto', cls: 'pri', collect: (m) => ({ mini: nova, url: m.querySelector('#f-url').value.trim() }) },
+      { label: 'Salvar foto', cls: 'pri', collect: (m) => ({ mini: nova }) },
       { label: 'Tirar a foto do produto', cls: 'ghost dan', value: { remover: true } },
       { label: 'Cancelar', value: null, cls: 'ghost' }],
   });
   if (!r) return;
-  if (!r.remover && r.url && r.url !== (prod.fotoUrl || '') && !(await abreComoImagem(r.url))) {
-    const ok = await modal({ title: 'Esse link não abriu como imagem',
-      body: `<p>O endereço colado não é o de uma imagem — geralmente é o link da <b>página</b> de busca ou da loja.</p>
-        <p class="small muted">No celular: segure o dedo na imagem e escolha <b>“Copiar endereço da imagem”</b> (termina em .jpg, .png ou .webp). Mais garantido ainda: <b>baixe a imagem</b> e use “Tirar foto ou escolher do celular” — aí ela fica guardada no app e aparece mesmo sem internet.</p>`,
-      actions: [{ label: 'Voltar e corrigir', value: false, cls: 'pri' }, { label: 'Salvar assim mesmo', value: true, cls: 'ghost' }] });
-    if (!ok) return;
-  }
   const patch = { atualizadoEm: Date.now(), atualizadoPor: S.me || '' };
   if (r.remover) { patch.fotoMini = null; patch.fotoUrl = ''; }
-  else if (r.mini || r.url !== (prod.fotoUrl || '')) {
-    if (r.mini) patch.fotoMini = r.mini;
-    patch.fotoUrl = r.url;
-  } else return;
+  else if (r.mini) patch.fotoMini = r.mini;
+  else return;
   try {
     await comSync(() => S.db.doc(`produtos/${codigo}`).update(patch));
     if (S.ui.pdraft && S.ui.pdraft.codigo === codigo) {
       if ('fotoMini' in patch) S.ui.pdraft.fotoMini = patch.fotoMini;
-      S.ui.pdraft.fotoUrl = patch.fotoUrl;
+      if ('fotoUrl' in patch) S.ui.pdraft.fotoUrl = patch.fotoUrl;
     }
     toast(r.remover ? 'Foto removida' : 'Foto salva ✓');
     render();
@@ -2442,7 +2418,7 @@ VIEWS.produto = (r) => {
       <h3>Foto e observações</h3>
       ${fotoSrc(d) ? `<img src="${esc(fotoSrc(d))}" alt="" style="max-width:160px;border-radius:12px">` : ''}
       ${d._novo ? '<p class="small muted" style="margin:0">Salve o produto primeiro; depois toque na miniatura dele na lista para pôr a foto.</p>'
-        : `<button class="btn ghost full" data-act="fotoItem" data-key="${esc(d.codigo)}">${fotoSrc(d) ? 'Trocar a foto' : 'Tirar foto ou colar link de imagem'}</button>`}
+        : `<button class="btn ghost full" data-act="fotoItem" data-key="${esc(d.codigo)}">${fotoSrc(d) ? 'Trocar a foto' : 'Tirar foto ou escolher do celular'}</button>`}
       <label class="f">Observações<textarea id="p-obs" data-in="pf" data-k="obs">${esc(d.obs || '')}</textarea></label>
       ${d.origem ? `<div class="tiny muted">Origem: ${esc(d.origem)}</div>` : ''}
     </section>
