@@ -565,16 +565,17 @@ function ensureContagem(cid) {
   if (!h) return; // assina quando a lista de contagens chegar
   subscribeContagem(h);
 }
+function assinarLanc(cid, amb) {
+  const u = S.db.doc(`contagens/${cid}/lanc/${amb}`).onSnapshot((d) => {
+    S.cur.lanc[amb] = d.exists ? (d.data().i || {}) : {};
+    S.cur.lancOk[amb] = true;
+    onData('lanc');
+  }, () => {});
+  S.cur.unsubs.push(u);
+}
 function subscribeContagem(h) {
   const cid = h.id;
-  for (const amb of h.ambientes || []) {
-    const u = S.db.doc(`contagens/${cid}/lanc/${amb}`).onSnapshot((d) => {
-      S.cur.lanc[amb] = d.exists ? (d.data().i || {}) : {};
-      S.cur.lancOk[amb] = true;
-      onData('lanc');
-    }, () => {});
-    S.cur.unsubs.push(u);
-  }
+  for (const amb of h.ambientes || []) assinarLanc(cid, amb);
   const u2 = S.db.doc(`contagens/${cid}/snap/params`).onSnapshot((d) => {
     S.cur.snap = d.exists ? d.data() : null;
     onData('snap');
@@ -910,6 +911,7 @@ VIEWS.hub = (r) => {
           ${pr.conv ? `<span class="pill p-warn">${pr.conv} com cálculo pendente</span>` : ''}
         </div></button>`;
     }).join('')}
+    ${ehGestor() && ambAtivos().some((a) => !(h.ambientes || []).includes(a.id)) ? `<button class="btn full" data-act="incluirAmb">+ Incluir outro ambiente nesta contagem</button>` : ''}
     <button class="btn big full" data-act="go" data-to="#/c/${h.id}/revisao">Revisar contagem</button>
     <div class="row">
       ${!pausada ? `<button class="btn grow" data-act="setStatus" data-st="pausada">Pausar contagem</button>` : ''}
@@ -1357,6 +1359,48 @@ ACT.fotoItem = async (el) => {
       if ('fotoUrl' in patch) S.ui.pdraft.fotoUrl = patch.fotoUrl;
     }
     toast(r.remover ? 'Foto removida' : 'Foto salva ✓');
+    render();
+  } catch (e) { toast(errMsg(e), 4000); }
+};
+
+
+/* ---- Incluir um ambiente numa contagem já aberta ---- */
+ACT.incluirAmb = async () => {
+  if (!ehGestor()) return toast('Só o gestor muda os ambientes da contagem');
+  const h = contagem(S.cur.cid);
+  if (!h) return;
+  if (fechadaStatus(h.status)) return toast('Esta contagem já foi encerrada');
+  const faltam = ambAtivos().filter((a) => !(h.ambientes || []).includes(a.id));
+  if (!faltam.length) return toast('Todos os ambientes já estão nesta contagem');
+  const escolha = await modal({
+    title: 'Incluir ambiente na contagem',
+    body: `<div class="stack">${faltam.map((a) => `<label class="check"><input type="checkbox" class="m-amb" value="${esc(a.id)}"> ${esc(a.nome)}</label>`).join('')}</div>
+      <p class="small muted">Entram nesta mesma contagem, cada um com a sua lista de produtos. O que já foi lançado não muda.</p>`,
+    actions: [
+      { label: 'Incluir', cls: 'pri',
+        check: (m) => m.querySelectorAll('.m-amb:checked').length > 0 || (toast('Marque pelo menos um ambiente'), false),
+        collect: (m) => [...m.querySelectorAll('.m-amb:checked')].map((x) => x.value) },
+      { label: 'Cancelar', value: null, cls: 'ghost' }],
+  });
+  if (!escolha || !escolha.length) return;
+  const novos = ambAtivos().filter((a) => escolha.includes(a.id));
+  try {
+    await comSync(async () => {
+      for (const a of novos) await S.db.doc(`contagens/${h.id}/lanc/${a.id}`).set({ i: {} });
+      await S.db.doc(`contagens/${h.id}`).update({
+        ambientes: [...(h.ambientes || []), ...novos.map((a) => a.id)],
+        ambNomes: { ...(h.ambNomes || {}), ...Object.fromEntries(novos.map((a) => [a.id, a.nome])) },
+        eventos: [...(h.eventos || []), { t: Date.now(), p: S.me || '', d: `Ambiente incluído: ${novos.map((a) => a.nome).join(', ')}` }].slice(-50),
+        atualizadoEm: Date.now(),
+      });
+    });
+    const loc = S.contagens.find((c) => c.id === h.id);
+    if (loc) {
+      loc.ambientes = [...(loc.ambientes || []), ...novos.map((a) => a.id)];
+      loc.ambNomes = { ...(loc.ambNomes || {}), ...Object.fromEntries(novos.map((a) => [a.id, a.nome])) };
+    }
+    novos.forEach((a) => assinarLanc(h.id, a.id));
+    toast(novos.length === 1 ? `${novos[0].nome} entrou na contagem ✓` : `${novos.length} ambientes entraram na contagem ✓`, 3500);
     render();
   } catch (e) { toast(errMsg(e), 4000); }
 };
