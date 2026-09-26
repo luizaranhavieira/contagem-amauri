@@ -2043,8 +2043,11 @@ async function gerarWorkbook(ctx, scope) {
   for (const a of ambs) {
     const ini = cols.length + 1;
     cols.push({ h: 'QTD GARRAFAS', w: 15, amb: a.id, tipo: 'qtd' });
-    colIdx[a.id] = { qtd: cols.length, ml: null, tot: null };
-    if (temPeso[a.id]) { cols.push({ h: 'QUANTIDADE DE LÍQUIDO NA GARRAFA (ml)', w: 20, amb: a.id, tipo: 'ml' }); colIdx[a.id].ml = cols.length; }
+    colIdx[a.id] = { qtd: cols.length, ab: null, ml: null, tot: null };
+    if (temPeso[a.id]) {
+      cols.push({ h: 'QTD ABERTAS', w: 12, amb: a.id, tipo: 'qtdab' }); colIdx[a.id].ab = cols.length;
+      cols.push({ h: 'QUANTIDADE DE LÍQUIDO NA GARRAFA (ml)', w: 20, amb: a.id, tipo: 'ml' }); colIdx[a.id].ml = cols.length;
+    }
     cols.push({ h: 'TOTAL EM ML (FECHADAS + ABERTAS)', w: 22, amb: a.id, tipo: 'totml' });
     colIdx[a.id].tot = cols.length;
     blocos.push({ nome: a.nome.toUpperCase(), ini, fim: cols.length });
@@ -2131,6 +2134,7 @@ async function gerarWorkbook(ctx, scope) {
       const rr = x.r;
       if (rr.status === 'nao_contado') { cell.value = null; return; }
       if (c.tipo === 'qtd') { cell.value = x.forma === 'peso' ? null : rr.fechadas; cell.numFmt = '0'; }
+      else if (c.tipo === 'qtdab') { cell.value = x.forma === 'fechadas' ? null : rr.nAbertas; cell.numFmt = '0'; }
       else if (c.tipo === 'ml') {
         cell.numFmt = '#,##0';
         if (!rr.nAbertas || it.unidade === 'KG') cell.value = null;
