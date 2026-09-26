@@ -2355,6 +2355,7 @@ VIEWS.cad = (r) => {
     return true;
   });
   return `${head}<div class="stack" style="margin-top:14px">
+    ${cartaoMigrar()}
     <button class="btn big pri full" data-act="go" data-to="#/cad/p/novo">Novo produto</button>
     <div class="search">${ICON.search}<input id="cb" type="search" data-in="cadBusca" placeholder="Buscar por nome ou código" value="${esc(u.cadBusca)}"></div>
     <select id="ccat" data-ch="cadCat"><option value="">Todas as categorias</option>${cats.map((c) => `<option ${u.cadCat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
@@ -2674,6 +2675,11 @@ function viewImportar() {
     </section>`;
   }
   return `<div class="stack" style="margin-top:14px">
+    <section class="card stack">
+      <h3>Trazer o cadastro do outro app</h3>
+      <div class="small muted">Arquivo <b>.json</b> gerado no app do Claude em <b>Cadastro › Baixar cadastro</b>. Traz os produtos com fotos, taras e volumes, e os ambientes.</div>
+      <label class="f">Arquivo do cadastro<input type="file" id="imp-cad" accept=".json,application/json" data-ch="impCad"></label>
+    </section>
     <p class="small muted" style="margin:0">Use a planilha no formato da “Contagem bebidas Amauri” (aba IMPRIMIR: Código, Descrição, Tipo, Unid. de medida). Produtos são identificados pelo código — nada é duplicado.</p>
     <label class="f">Arquivo .xlsx<input type="file" id="imp-file" accept=".xlsx,.xls" data-ch="impFile"></label>
     ${prev}
@@ -2751,6 +2757,66 @@ function viewTeste() {
     </div>
   </div>`;
 }
+
+/* ===== Levar o cadastro de um app para o outro por arquivo ===== */
+function cartaoMigrar() {
+  if (typeof CFG !== 'undefined' || !ehGestor()) return '';
+  return `<section class="card stack">
+    <h3>Levar o cadastro para o app do celular</h3>
+    <div class="small muted">Baixa um arquivo com os <b>${S.produtos.size} produtos</b> (fotos, taras, volumes) e os ambientes. Depois, no app do celular, use <b>Cadastro › Importar</b> e escolha esse arquivo.</div>
+    <button class="btn full" data-act="baixarCad" id="b-bxcad">Baixar cadastro (arquivo)</button>
+  </section>`;
+}
+function cadastroEmArquivo() {
+  return {
+    formato: 'contagem-amauri/cadastro',
+    versao: 1,
+    geradoEm: new Date().toISOString(),
+    produtos: [...S.produtos.entries()].map(([id, p]) => ({ ...p, codigo: p.codigo || id })),
+    ambientes: S.ambientes.map((a) => ({ id: a.id, nome: a.nome, ordem: a.ordem, ativo: a.ativo !== false })),
+  };
+}
+ACT.baixarCad = async (el) => {
+  if (!S.dl) return toast('Download indisponível nesta visualização.', 4000);
+  el.disabled = true; el.textContent = 'Preparando…';
+  try {
+    const txt = JSON.stringify(cadastroEmArquivo());
+    const nome = `cadastro-amauri-${new Date().toISOString().slice(0, 10)}.json`;
+    await S.dl.save({ filename: nome, data: new Blob([txt], { type: 'application/json' }) });
+    toast(`Arquivo gerado: ${nome} ✓`, 4000);
+  } catch (e) {
+    if (e && e.code === 'declined') toast('Download cancelado');
+    else toast('Não consegui gerar o arquivo: ' + ((e && e.message) || e), 5000);
+  } finally { el.disabled = false; el.textContent = 'Baixar cadastro (arquivo)'; }
+};
+
+/* ---- Importar esse arquivo (no app do celular) ---- */
+INP.impCad = async (el) => {
+  const f = el.files && el.files[0];
+  if (!f) return;
+  let dados;
+  try { dados = JSON.parse(await f.text()); } catch (e) { return toast('Arquivo inválido — use o arquivo gerado pelo outro app.', 5000); }
+  if (!dados || dados.formato !== 'contagem-amauri/cadastro' || !Array.isArray(dados.produtos)) return toast('Esse arquivo não é um cadastro do Contagem Amauri.', 5000);
+  const ok = await confirmar('Importar o cadastro?',
+    `${dados.produtos.length} produtos e ${(dados.ambientes || []).length} ambientes do arquivo vão substituir o cadastro atual deste app (fotos e taras inclusive). As contagens não são afetadas.`, 'Importar');
+  if (!ok) return;
+  const btn = $('#b-impcad');
+  if (btn) { btn.disabled = true; }
+  let n = 0;
+  try {
+    for (const a of dados.ambientes || []) {
+      await S.db.doc(`ambientes/${a.id}`).set({ nome: a.nome, ordem: a.ordem || 0, ativo: a.ativo !== false });
+    }
+    for (const p of dados.produtos) {
+      if (!p || !p.codigo) continue;
+      await S.db.doc(`produtos/${p.codigo}`).set(p);
+      if (++n % 10 === 0) toast(`Importando… ${n}/${dados.produtos.length}`, 1200);
+    }
+    toast(`Cadastro importado: ${n} produtos ✓`, 4000);
+    go('#/cad');
+  } catch (e) { toast(`${errMsg(e)} (${n} gravados antes do erro)`, 6000); }
+  finally { if (btn) btn.disabled = false; }
+};
 
 /* ===== Acesso: usuários, PIN e níveis ===== */
 const PAPEL_LABEL = { gestor: 'Gestor (cadastro e fechamento)', contador: 'Contador (lança a contagem)' };
