@@ -255,3 +255,11 @@ input.qin{width:58px}
 .qthumb img{width:100%;height:100%;object-fit:cover;display:block}
 .qthumb .ini{font-weight:700;font-size:15px;color:var(--muted)}
 .qthumb:active{opacity:.7}
+/* card de ambiente com o ✕ de tirar da contagem */
+.ambwrap{position:relative;padding:0;overflow:hidden}
+.ambgo{display:block;width:100%;text-align:left;color:inherit;font:inherit;background:none;border:0;padding:14px 38px 14px 14px;cursor:pointer}
+.ambgo:active{transform:scale(.995)}
+.ambgo[disabled]{opacity:.5;cursor:default}
+.ambx{position:absolute;top:6px;right:6px;z-index:2;width:28px;height:28px;border:0;border-radius:8px;background:transparent;color:var(--muted);opacity:.45;font-size:12px;line-height:1;cursor:pointer;transition:opacity .12s ease,color .12s ease}
+.ambx:hover{opacity:.9}
+.ambx:active{opacity:1;color:var(--danger);background:var(--surface-2)}

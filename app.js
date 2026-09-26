@@ -903,13 +903,17 @@ VIEWS.hub = (r) => {
     ${ctx.ambs.map((a) => {
       const pr = progresso(ctx.itens(a.id));
       const ok = S.cur.lancOk[a.id];
-      return `<button class="card tap lift amb-card" data-act="entrarAmb" data-amb="${a.id}" ${pausada ? 'disabled' : ''}>
-        <div class="row between"><h2>${esc(a.nome)}</h2><span class="num small muted">${ok ? `${pr.contados}/${pr.total}` : '…'}</span></div>
-        <div class="prog" style="margin-top:10px"><i style="width:${pr.pct}%"></i></div>
-        <div class="row small" style="margin-top:8px">
-          <span class="muted">${pr.total - pr.contados} pendentes</span>
-          ${pr.conv ? `<span class="pill p-warn">${pr.conv} com cálculo pendente</span>` : ''}
-        </div></button>`;
+      const podeTirar = ehGestor() && (h.ambientes || []).length > 1;
+      return `<div class="card lift amb-card ambwrap">
+        ${podeTirar ? `<button class="ambx" data-act="tirarAmb" data-amb="${a.id}" aria-label="Tirar ${esc(a.nome)} desta contagem" title="Tirar ${esc(a.nome)} desta contagem">✕</button>` : ''}
+        <button class="ambgo" data-act="entrarAmb" data-amb="${a.id}" ${pausada ? 'disabled' : ''}>
+          <div class="row between"><h2>${esc(a.nome)}</h2><span class="num small muted">${ok ? `${pr.contados}/${pr.total}` : '…'}</span></div>
+          <div class="prog" style="margin-top:10px"><i style="width:${pr.pct}%"></i></div>
+          <div class="row small" style="margin-top:8px">
+            <span class="muted">${pr.total - pr.contados} pendentes</span>
+            ${pr.conv ? `<span class="pill p-warn">${pr.conv} com cálculo pendente</span>` : ''}
+          </div>
+        </button></div>`;
     }).join('')}
     ${ehGestor() && ambAtivos().some((a) => !(h.ambientes || []).includes(a.id)) ? `<button class="btn full" data-act="incluirAmb">+ Incluir outro ambiente nesta contagem</button>` : ''}
     <button class="btn big full" data-act="go" data-to="#/c/${h.id}/revisao">Revisar contagem</button>
@@ -1401,6 +1405,44 @@ ACT.incluirAmb = async () => {
     }
     novos.forEach((a) => assinarLanc(h.id, a.id));
     toast(novos.length === 1 ? `${novos[0].nome} entrou na contagem ✓` : `${novos.length} ambientes entraram na contagem ✓`, 3500);
+    render();
+  } catch (e) { toast(errMsg(e), 4000); }
+};
+
+
+/* ---- Tirar um ambiente da contagem, pelo ✕ do próprio card ---- */
+ACT.tirarAmb = async (el) => {
+  if (!ehGestor()) return toast('Só o gestor muda os ambientes da contagem');
+  const h = contagem(S.cur.cid);
+  if (!h) return;
+  if (fechadaStatus(h.status)) return toast('Esta contagem já foi encerrada');
+  const ambs = (h.ambientes || []);
+  const alvo = el.dataset.amb;
+  if (!alvo || !ambs.includes(alvo)) return;
+  if (ambs.length <= 1) return toast('A contagem precisa de pelo menos um ambiente. Para apagar tudo, use “Excluir contagem”.', 5000);
+  const nome = ambNome(alvo, h);
+  const pr = S.cur.lancOk[alvo] ? progresso(ctxAtual().itens(alvo)) : null;
+  const ok = await modal({
+    title: `Tirar ${nome} da contagem?`,
+    body: `<p>${pr && pr.contados ? `Este ambiente tem <b>${pr.contados} ${pr.contados === 1 ? 'item lançado' : 'itens lançados'}</b>, que serão apagados.` : 'Ainda não há nada lançado neste ambiente.'}</p>
+      <p class="small muted">Os outros ambientes desta contagem não são afetados, e o cadastro dos produtos continua igual.</p>`,
+    actions: [{ label: `Tirar ${nome}`, value: true, cls: 'dan' }, { label: 'Cancelar', value: false, cls: 'ghost' }],
+  });
+  if (!ok) return;
+  try {
+    await comSync(async () => {
+      await S.db.doc(`contagens/${h.id}/lanc/${alvo}`).delete();
+      await S.db.doc(`contagens/${h.id}`).update({
+        ambientes: ambs.filter((x) => x !== alvo),
+        eventos: [...(h.eventos || []), { t: Date.now(), p: S.me || '', d: `Ambiente retirado da contagem: ${nome}` }].slice(-50),
+        atualizadoEm: Date.now(),
+      });
+    });
+    const loc = S.contagens.find((c) => c.id === h.id);
+    if (loc) loc.ambientes = ambs.filter((x) => x !== alvo);
+    delete S.cur.lanc[alvo]; delete S.cur.lancOk[alvo];
+    if (S.ui.resAmb === alvo) S.ui.resAmb = null;
+    toast(`${nome} saiu desta contagem`, 3500);
     render();
   } catch (e) { toast(errMsg(e), 4000); }
 };
