@@ -1954,7 +1954,7 @@ ACT.finalizarRapido = async (el) => {
   S.saving = false;
   const ctxFim = ctxDe({ ...h, status: parcial ? 'parcial' : 'finalizada' }, lancCopia, snap);
   let msgDrive = '';
-  if (window.claude && window.claude.use) try {
+  if (driveAtivo()) try {
     const rd = await enviarContagemDrive(ctxFim, S.user.nome);
     msgDrive = rd.ok ? 'Planilha enviada ao Drive ✓' : rd.fila ? `Drive: ficou na fila (${rd.msg})` : `Drive: ${rd.msg}`;
   } catch (e) { msgDrive = 'Drive: não foi possível enviar — tente pelo Histórico'; }
@@ -3173,11 +3173,124 @@ async function formUsuario(u) {
 ACT.novoUsuario = () => formUsuario(null);
 ACT.editUsuario = (el) => formUsuario(S.usuarios.find((u) => u.id === el.dataset.id));
 
-/* ===== Envio para o Drive — fase 2 (login Google dentro do app) ===== */
-function cartaoDrive() {
+/* ===== Envio da planilha para a pasta do Drive ===== */
+const DRIVE_PASTA = 'Contagem de Bebidas - Mercearia Amauri';
+function cartaoDrive(h) {
+  const ex = S.exportacoes[h.id];
+  if (ex && ex.status === 'enviado') {
+    return `<div class="note n-ok small">Planilha enviada para a pasta <b>${DRIVE_PASTA}</b> no Drive em ${horaBR(ex.enviadoEm)}.
+      ${ex.link ? `<br><a href="${esc(ex.link)}" target="_blank" rel="noopener">Abrir no Drive</a>` : ''}</div>
+      ${ehGestor() ? '<button class="btn ghost full" data-act="enviarDrive">Enviar de novo</button>' : ''}`;
+  }
+  if (ex && ex.status === 'pendente') {
+    return `<div class="note n-info small">Planilha na fila de envio para o Drive (${horaBR(ex.em)}), por ${esc(ex.por || '—')}. Ela aparece na pasta em até 1 hora.${ex.motivoFila ? `<br>Não foi direto: ${esc(ex.motivoFila)}.` : ''}</div>
+      ${ehGestor() ? '<button class="btn full" data-act="enviarDrive">Tentar enviar agora</button>' : ''}`;
+  }
+  if (ex && ex.status === 'erro') {
+    return `<div class="note n-err small">O envio ao Drive falhou: ${esc(ex.erro || 'motivo não informado')}.</div>
+      ${ehGestor() ? '<button class="btn warn full" data-act="enviarDrive">Tentar enviar de novo</button>' : ''}`;
+  }
   if (!ehGestor()) return '';
-  return `<div class="note n-info small">Envio automático para a pasta do Drive: em preparação. Por enquanto, baixe a planilha e suba na pasta compartilhada.</div>`;
+  if (!driveAtivo()) return '<div class="note n-info small">Envio para a pasta do Drive indisponível neste aparelho. Baixe a planilha e suba na pasta.</div>';
+  return `<button class="btn big full" data-act="enviarDrive" id="btn-drive">Enviar para a pasta do Drive</button>
+    <div class="tiny muted">Vai na hora para a pasta <b>${DRIVE_PASTA}</b>, compartilhada com a diretoria.</div>`;
 }
+const DRIVE_SERVER = 'Google Drive';
+const DRIVE_PASTA_ID = '1NQ90CFDJnZasyjyCnO0a4ep6EWTpO4Yv';
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+let mcpP = null;
+const usarMcp = () => (mcpP || (mcpP = (window.claude && window.claude.use ? window.claude.use('mcp') : Promise.resolve(null)).catch(() => null)));
+function b64de(bytes) {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+  return btoa(bin);
+}
+/* Sobe o .xlsx direto na pasta do Drive. Devolve {ok, link} ou {ok:false, code, msg}. */
+const DRIVE_WEB = () => (typeof window !== 'undefined' && window.DRIVE_WEBAPP_URL) || '';
+const noClaude = () => !!(window.claude && window.claude.use);
+const driveAtivo = () => noClaude() || !!DRIVE_WEB();
+async function subirViaWebApp(nome, bytes) {
+  try {
+    const r = await fetch(DRIVE_WEB(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ chave: window.DRIVE_CHAVE || '', nome, base64: b64de(bytes) }) });
+    const j = await r.json();
+    if (j && j.ok) return { ok: true, link: j.link || `https://drive.google.com/drive/folders/${DRIVE_PASTA_ID}`, id: j.id || '' };
+    return { ok: false, code: 'tool_error', msg: (j && j.erro) || 'o Drive recusou o arquivo' };
+  } catch (e) {
+    return { ok: false, code: 'server_unavailable', msg: 'sem resposta do Drive — confira a internet e a pasta antes de tentar de novo' };
+  }
+}
+async function subirNoDrive(nome, bytes) {
+  if (!noClaude() && DRIVE_WEB()) return subirViaWebApp(nome, bytes);
+  const mcp = await usarMcp();
+  if (!mcp) return { ok: false, code: 'sem_mcp', msg: 'envio direto indisponível nesta visualização' };
+  try {
+    const r = await mcp.callTool(DRIVE_SERVER, 'create_file', {
+      title: nome, parentId: DRIVE_PASTA_ID, contentMimeType: XLSX_MIME,
+      base64Content: b64de(bytes), disableConversionToGoogleType: true,
+    }, { cache: false });
+    const p = (r && r.payload && typeof r.payload === 'object') ? r.payload : {};
+    const f = p.file && typeof p.file === 'object' ? p.file : p;
+    const link = f.viewUrl || f.webViewLink || f.alternateLink || (f.id ? `https://drive.google.com/file/d/${f.id}/view` : `https://drive.google.com/drive/folders/${DRIVE_PASTA_ID}`);
+    return { ok: true, link, id: f.id || '' };
+  } catch (e) {
+    const code = (e && e.code) || 'upstream_error';
+    const msg = code === 'server_not_connected' ? 'o Google Drive não está conectado nesta conta do Claude (Configurações › Conectores)'
+      : code === 'needs_reauth' ? 'a conexão com o Google Drive expirou — reconecte em Configurações › Conectores do Claude'
+      : code === 'not_in_manifest' || code === 'not_granted' ? 'o envio ao Drive não foi autorizado neste app'
+      : code === 'blocked_by_policy' || code === 'approval_required' ? 'o envio ao Drive está bloqueado pela política da conta'
+      : code === 'selection_required' ? 'escolha qual conexão do Google Drive usar no aviso do Claude e tente de novo'
+      : code === 'tool_error' ? ('o Drive recusou o arquivo: ' + ((e && e.message) || ''))
+      : code === 'server_unavailable' ? 'o Google Drive não respondeu — confira a pasta antes de tentar de novo'
+      : ((e && e.message) || 'falha no envio');
+    return { ok: false, code, msg };
+  }
+}
+/* Gera a planilha e manda na hora; se não der, deixa na fila (tarefa de hora em hora). */
+async function enviarContagemDrive(ctx, nomeUser) {
+  const h = ctx.h;
+  await carregarLib('ExcelJS');
+  const { wb, nome } = await gerarWorkbook(ctx, 'todos');
+  const bytes = new Uint8Array(await wb.xlsx.writeBuffer());
+  const r = await subirNoDrive(nome, bytes);
+  if (r.ok) {
+    const antigo = S.exportacoes[h.id];
+    if (antigo && antigo.partes) { for (let i = 0; i < antigo.partes; i++) { try { await S.db.doc(`exportacoes/${h.id}/p/${i}`).delete(); } catch {} } }
+    await comSync(() => S.db.doc(`exportacoes/${h.id}`).set({
+      nome, status: 'enviado', enviadoEm: Date.now(), link: r.link, driveId: r.id, por: nomeUser, em: Date.now(),
+      data: h.data, responsavel: h.responsavel, pasta: DRIVE_PASTA, direto: true,
+    }));
+    return { ok: true, link: r.link };
+  }
+  // quando o Drive pode ter recebido (sem resposta), não duplica pela fila; fora do Claude não há fila
+  if (r.code === 'server_unavailable' || r.code === 'upstream_error' || !noClaude()) {
+    await comSync(() => S.db.doc(`exportacoes/${h.id}`).set({ nome, status: 'erro', erro: r.msg, por: nomeUser, em: Date.now(), data: h.data, responsavel: h.responsavel, pasta: DRIVE_PASTA }));
+    return { ok: false, msg: r.msg };
+  }
+  const b64 = b64de(bytes);
+  const tam = 120000, partes = [];
+  for (let i = 0; i < b64.length; i += tam) partes.push(b64.slice(i, i + tam));
+  await comSync(async () => {
+    for (let i = 0; i < partes.length; i++) await S.db.doc(`exportacoes/${h.id}/p/${i}`).set({ b64: partes[i] });
+    await S.db.doc(`exportacoes/${h.id}`).set({ nome, partes: partes.length, bytes: bytes.length, status: 'pendente', por: nomeUser, em: Date.now(),
+      data: h.data, responsavel: h.responsavel, pasta: DRIVE_PASTA, motivoFila: r.msg });
+  });
+  return { ok: false, fila: true, msg: r.msg };
+}
+ACT.enviarDrive = async (el) => {
+  if (!ehGestor()) return toast('Só o gestor envia a planilha para o Drive');
+  const ctx = ctxAtual();
+  if (S.saving) return;
+  S.saving = true; el.disabled = true; const txt = el.textContent; el.textContent = 'Enviando ao Drive…';
+  try {
+    const r = await enviarContagemDrive(ctx, S.user.nome);
+    if (r.ok) toast('Planilha enviada ao Drive ✓', 3500);
+    else if (r.fila) toast(`Não foi direto (${r.msg}). Ficou na fila e chega em até 1 hora.`, 7000);
+    else toast(`Envio ao Drive falhou: ${r.msg}`, 7000);
+    render();
+  } catch (e) { console.error(e); toast('Não foi possível preparar o envio: ' + ((e && e.message) || e), 5000); }
+  finally { S.saving = false; el.disabled = false; el.textContent = txt; }
+};
 
 
 /* ----- configuração do banco (fica no fim para ACT já existir) ----- */
