@@ -1,5 +1,5 @@
 /* Contagem Amauri — service worker */
-const CACHE = 'contagem-v2';
+const CACHE = 'contagem-v3';
 const ARQUIVOS = ['./', './index.html', './app.css', './app.js', './config.js', './manifest.webmanifest', './icone-192.png', './icone-512.png'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARQUIVOS)).then(() => self.skipWaiting()));

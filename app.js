@@ -518,6 +518,7 @@ function route() {
     return { name: 'hub', cid };
   }
   if (p[0] === 'hist') return { name: 'hist' };
+  if (p[0] === 'gestao') return { name: 'gestao' };
   if (p[0] === 'comparar') return { name: 'comparar', a: p[1], b: p[2] };
   if (p[0] === 'cad') {
     if (p[1] === 'p') return { name: 'produto', code: p.slice(2).join('/') };
@@ -526,7 +527,8 @@ function route() {
   }
   return { name: 'home' };
 }
-const go = (h) => { if (location.hash === h) render(); else location.hash = h; };
+let goBusy = false;
+const go = (h) => { if (location.hash !== h) { location.hash = h; return; } if (goBusy) return; goBusy = true; try { render(); } finally { goBusy = false; } };
 let R = route();
 window.addEventListener('hashchange', () => {
   const prev = R; R = route();
@@ -587,7 +589,7 @@ function subscribeContagem(h) {
 /* Contexto de uma contagem: itens por ambiente e parâmetros (vivos ou congelados) */
 function ctxDe(h, lancMap, snap) {
   const congelado = fechadaStatus(h.status) && snap;
-  const ambs = (h.ambientes || []).map((id) => ({ id, nome: (congelado && snap.amb[id] && snap.amb[id].nome) || ambNome(id, h) }));
+  const ambs = [...new Set(h.ambientes || [])].map((id) => ({ id, nome: (congelado && snap.amb[id] && snap.amb[id].nome) || ambNome(id, h) }));
   const cacheItens = {};
   function itens(ambId) {
     if (cacheItens[ambId]) return cacheItens[ambId];
@@ -670,7 +672,7 @@ function render() {
     else if (!S.loaded.p || !S.loaded.a || !S.loaded.c || !S.loaded.u) html = `<div class="loading"><div><img src="${LOGO}" alt="Mercearia Amauri"><p class="eyebrow" style="margin-top:14px">Carregando contagem…</p></div></div>`;
     else if (!S.usuarios.length) html = VIEWS.primeiroAcesso();
     else if (!sessaoValida()) html = VIEWS.login();
-    else if (['cad', 'produto', 'ambiente', 'nova'].includes(R.name) && !ehGestor()) html = semPermissao(R.name === 'nova' ? 'Iniciar contagem' : 'Cadastro');
+    else if (['cad', 'produto', 'ambiente', 'nova', 'gestao', 'hist', 'revisao', 'resumo', 'item', 'comparar'].includes(R.name) && !ehGestor()) html = semPermissao(R.name === 'nova' ? 'Iniciar contagem' : 'Área do gestor');
     else html = VIEWS[R.name] ? VIEWS[R.name](R) : VIEWS.home(R);
   } catch (e) {
     console.error(e);
@@ -784,35 +786,76 @@ async function boot() {
 const VIEWS = {};
 
 VIEWS.home = () => {
-  const abertas = S.contagens.filter((c) => !fechadaStatus(c.status)).sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0));
-  const recentes = S.contagens.filter((c) => fechadaStatus(c.status)).sort((a, b) => (b.finalizadoEm || 0) - (a.finalizadoEm || 0)).slice(0, 3);
-  const nProd = [...S.produtos.values()].filter((p) => p.ativo !== false).length;
+  const atual = contagemAberta();
   const semProd = S.produtos.size === 0;
-  const emAnd = abertas.length;
-  const atual = abertas[0];
-  return `<div class="hero-brand">
-    <div class="top-row"><div data-sync>${syncHTML()}</div></div>
+  let corpo;
+  if (atual && atual.status === 'pausada') corpo = `<div class="small" style="opacity:.85;margin-top:16px">Contagem de ${dataBR(atual.data)} pausada.</div>
+    ${ehGestor() ? `<button class="btn big full cta" data-act="retomar" data-cid="${atual.id}">Retomar contagem</button>` : '<div class="small" style="opacity:.85">O gestor retoma a contagem.</div>'}`;
+  else if (atual) corpo = `<button class="btn big full cta" data-act="go" data-to="#/c/${atual.id}">Contar</button>
+    <div class="small" style="margin-top:10px;opacity:.8">Contagem de ${dataBR(atual.data)}</div>`;
+  else if (ehGestor()) corpo = `<button class="btn big full cta" data-act="go" data-to="#/nova" ${semProd ? 'disabled' : ''}>Iniciar contagem</button>`;
+  else corpo = `<div class="small" style="opacity:.85;margin-top:16px">Nenhuma contagem aberta. O gestor inicia a próxima.</div>`;
+  return `<div class="hero-brand hero-min">
+    ${ehGestor() ? `<button class="gear" data-act="go" data-to="#/gestao" aria-label="Área do gestor" title="Área do gestor">⚙</button>` : ''}
     <img class="logo" src="${LOGO}" alt="Mercearia Amauri">
-    <div class="deco">Mercearia Amauri · São Paulo</div>
     <h1>Contagem de bebidas</h1>
-    <div class="stats"><div><b>${nProd}</b><span>produtos</span></div><div><b>${ambAtivos().length}</b><span>ambientes</span></div><div><b>${emAnd}</b><span>em andamento</span></div></div>
-    ${atual ? `<button class="btn big full cta" data-act="go" data-to="#/c/${atual.id}">Continuar contagem de ${dataBR(atual.data)}</button>
-      <div class="small" style="margin-top:10px;opacity:.8">${atual.status === 'pausada' ? 'Contagem pausada · ' : ''}Responsável: ${esc(atual.responsavel)}. Para iniciar outra, finalize ou exclua esta.</div>`
-    : ehGestor() ? `<button class="btn big full cta" data-act="go" data-to="#/nova" ${semProd ? 'disabled' : ''}>Iniciar contagem</button>`
-      : `<div class="small" style="opacity:.85">Nenhuma contagem aberta. O gestor inicia a próxima contagem.</div>`}
+    ${corpo}
   </div>
-  <div class="stack" style="margin-top:18px">
-    ${barraUsuario()}
-    ${semProd ? `<div class="note n-warn">Nenhum produto cadastrado. Importe a planilha em Cadastro › Importar planilha.</div>` : ''}
-    <div class="eyebrow">Contagem em andamento</div>
-    ${abertas.length > 1 ? `<div class="note n-warn small">Há ${abertas.length} contagens abertas. Só pode existir uma: continue a correta e exclua as outras (botão “Excluir contagem” dentro de cada uma).</div>` : ''}
-    ${abertas.length ? abertas.map(cardContagem).join('') : '<p class="muted small" style="margin:0">Nenhuma contagem em andamento.</p>'}
-    ${recentes.length ? `<div class="eyebrow" style="margin-top:8px">Encerradas recentemente</div>${recentes.map(cardContagem).join('')}` : ''}
-    <div class="navgrid" style="margin-top:8px">
-      <button class="card tap" data-act="go" data-to="#/hist"><h3>Histórico</h3><div class="muted small">Contagens anteriores, comparação e Excel</div></button>
-      ${ehGestor() ? `<button class="card tap" data-act="go" data-to="#/cad"><h3>Cadastro</h3><div class="muted small">Produtos, taras, ambientes, equipe e importação</div></button>` : ''}
-    </div>
+  ${S.user ? `<div class="userline"><span>${esc(S.user.nome)}</span>·<button data-act="sair">Sair</button></div>` : ''}`;
+};
+ACT.retomar = async (el) => {
+  const h = contagem(el.dataset.cid); if (!h) return;
+  try {
+    await comSync(() => S.db.doc(`contagens/${h.id}`).update({ status: 'andamento', atualizadoEm: Date.now(),
+      eventos: [...(h.eventos || []), { t: Date.now(), p: S.me || '', d: 'Contagem retomada' }].slice(-50) }));
+    go(`#/c/${h.id}`);
+  } catch (e) { toast(errMsg(e), 4000); }
+};
+
+/* ---- Área do gestor: tudo que não é contar ---- */
+VIEWS.gestao = () => {
+  const ab = contagemAberta();
+  const abertas = S.contagens.filter((c) => !fechadaStatus(c.status));
+  return `${topbar({ back: '#/', eyebrow: 'Mercearia Amauri', title: 'Área do gestor' })}
+  <div class="stack" style="margin-top:16px">
+    ${abertas.length > 1 ? `<div class="note n-warn small">Há ${abertas.length} contagens abertas. Só pode existir uma: exclua as outras pelo Histórico.</div>` : ''}
+    ${ab ? `<section class="card stack">
+      <div class="row between"><h3>Contagem de ${dataBR(ab.data)}</h3><span class="pill ${ab.status === 'pausada' ? 'p-pend' : 'p-acc'}">${STATUS_LABEL[ab.status]}</span></div>
+      <div class="muted small">Responsável: ${esc(ab.responsavel)} · ${(ab.ambientes || []).map((a) => esc(ambNome(a, ab))).join(', ')}</div>
+      <div class="mgrid">
+        <button class="btn full" data-act="go" data-to="#/c/${ab.id}/revisao">Revisar pendências</button>
+        <button class="btn full" data-act="go" data-to="#/c/${ab.id}/resumo">Prévia do resumo</button>
+        ${ambAtivos().some((a) => !(ab.ambientes || []).includes(a.id)) ? `<button class="btn full" data-act="incluirAmbG" data-cid="${ab.id}">+ Incluir ambiente</button>` : ''}
+        ${(ab.ambientes || []).length > 1 ? `<button class="btn full" data-act="tirarAmbMenu" data-cid="${ab.id}">Tirar um ambiente</button>` : ''}
+        ${ab.status !== 'pausada' ? `<button class="btn full" data-act="pausarG" data-cid="${ab.id}">Pausar contagem</button>` : ''}
+        <button class="btn dan ghost full" data-act="excluirContagem" data-cid="${ab.id}">Excluir contagem</button>
+      </div>
+    </section>` : ''}
+    <button class="card tap lift" data-act="go" data-to="#/hist"><h3>Histórico</h3><div class="muted small">Contagens anteriores, resumo, Excel e comparação</div></button>
+    <button class="card tap lift" data-act="go" data-to="#/cad"><h3>Cadastro</h3><div class="muted small">Produtos, taras, ambientes, equipe e importação</div></button>
   </div>`;
+};
+async function comContagem(cid, fn) {
+  const volta = S.cur.cid;
+  ensureContagem(cid);
+  try { await fn(); } finally { if (R.name === 'gestao' && volta !== cid) { /* mantém assinatura */ } }
+}
+ACT.pausarG = async (el) => {
+  const h = contagem(el.dataset.cid); if (!h) return;
+  try {
+    await comSync(() => S.db.doc(`contagens/${h.id}`).update({ status: 'pausada', atualizadoEm: Date.now(),
+      eventos: [...(h.eventos || []), { t: Date.now(), p: S.me || '', d: 'Contagem pausada' }].slice(-50) }));
+    toast('Contagem pausada — lançamentos guardados');
+  } catch (e) { toast(errMsg(e), 4000); }
+};
+ACT.incluirAmbG = (el) => comContagem(el.dataset.cid, () => ACT.incluirAmb(el));
+ACT.tirarAmbMenu = async (el) => {
+  const h = contagem(el.dataset.cid); if (!h) return;
+  const amb = await modal({ title: 'Tirar qual ambiente?', body: '<p class="small muted">Os lançamentos desse ambiente nesta contagem são apagados.</p>',
+    actions: [...(h.ambientes || []).map((a) => ({ label: ambNome(a, h), value: a })), { label: 'Cancelar', value: null, cls: 'ghost' }] });
+  if (!amb) return;
+  ensureContagem(h.id);
+  await ACT.tirarAmb({ dataset: { amb } });
 };
 
 function cardContagem(c) {
@@ -889,40 +932,29 @@ ACT.criarContagem = async (btn) => {
 VIEWS.hub = (r) => {
   const h = contagem(r.cid);
   if (!h) return `${topbar({ back: '#/', title: 'Contagem não encontrada' })}<p class="muted">Ela pode ter sido excluída.</p>`;
-  if (fechadaStatus(h.status)) { AFTER.push(() => go(`#/c/${h.id}/resumo`)); return ''; }
+  if (S.ui.finalizando) return `<div class="loading"><div><img src="${LOGO}" alt=""><p class="eyebrow" style="margin-top:14px">Finalizando e gerando a planilha…</p></div></div>`;
+  if (fechadaStatus(h.status)) { AFTER.push(() => go(ehGestor() ? `#/c/${h.id}/resumo` : '#/')); return ''; }
+  if (h.status === 'pausada') { AFTER.push(() => go('#/')); return ''; }
   const ctx = ctxAtual();
-  const pausada = h.status === 'pausada';
+  let totC = 0, totT = 0, carregado = true;
+  const cards = ctx.ambs.map((a) => {
+    const pr = progresso(ctx.itens(a.id));
+    const ok = S.cur.lancOk[a.id];
+    if (!ok) carregado = false;
+    totC += pr.contados; totT += pr.total;
+    const fim = ok && pr.total && pr.contados === pr.total;
+    return `<div class="card lift amb-card ambwrap">
+      <button class="ambgo" data-act="entrarAmb" data-amb="${a.id}">
+        <div class="row between"><h2>${esc(a.nome)}</h2>${fim ? '<span class="feito-ok">✓ concluído</span>' : `<span class="num small muted">${ok ? `${pr.contados}/${pr.total}` : '…'}</span>`}</div>
+        <div class="prog" style="margin-top:10px"><i style="width:${pr.pct}%"></i></div>
+      </button></div>`;
+  }).join('');
   return `${topbar({ back: '#/', eyebrow: `Contagem de ${dataBR(h.data)}`, title: 'Escolha o ambiente' })}
   <div class="stack" style="margin-top:14px">
-    <div class="row between small"><span class="muted">Responsável: <b>${esc(h.responsavel)}</b></span>
-      <span class="pill ${pausada ? 'p-pend' : 'p-acc'}">${STATUS_LABEL[h.status]}</span></div>
-    <div class="row small"><span class="muted grow">Contando: <b>${esc((S.user && S.user.nome) || S.me || '—')}</b></span>
-      <button class="btn ghost small" data-act="sair" style="min-height:40px">Sair</button></div>
-    ${pausada ? `<div class="note n-info">Contagem pausada. Os lançamentos estão guardados. Toque em Retomar para continuar.</div>
-      <button class="btn big pri full" data-act="setStatus" data-st="andamento">Retomar contagem</button>` : ''}
-    ${ctx.ambs.map((a) => {
-      const pr = progresso(ctx.itens(a.id));
-      const ok = S.cur.lancOk[a.id];
-      const podeTirar = ehGestor() && (h.ambientes || []).length > 1;
-      return `<div class="card lift amb-card ambwrap">
-        ${podeTirar ? `<button class="ambx" data-act="tirarAmb" data-amb="${a.id}" aria-label="Tirar ${esc(a.nome)} desta contagem" title="Tirar ${esc(a.nome)} desta contagem">✕</button>` : ''}
-        <button class="ambgo" data-act="entrarAmb" data-amb="${a.id}" ${pausada ? 'disabled' : ''}>
-          <div class="row between"><h2>${esc(a.nome)}</h2><span class="num small muted">${ok ? `${pr.contados}/${pr.total}` : '…'}</span></div>
-          <div class="prog" style="margin-top:10px"><i style="width:${pr.pct}%"></i></div>
-          <div class="row small" style="margin-top:8px">
-            <span class="muted">${pr.total - pr.contados} pendentes</span>
-            ${pr.conv ? `<span class="pill p-warn">${pr.conv} com cálculo pendente</span>` : ''}
-          </div>
-        </button></div>`;
-    }).join('')}
-    ${ehGestor() && ambAtivos().some((a) => !(h.ambientes || []).includes(a.id)) ? `<button class="btn full" data-act="incluirAmb">+ Incluir outro ambiente nesta contagem</button>` : ''}
-    <button class="btn big full" data-act="go" data-to="#/c/${h.id}/revisao">Revisar contagem</button>
-    <div class="row">
-      ${!pausada ? `<button class="btn grow" data-act="setStatus" data-st="pausada">Pausar contagem</button>` : ''}
-      <button class="btn grow" data-act="go" data-to="#/c/${h.id}/resumo">Prévia do resumo</button>
-    </div>
-    ${ehGestor() ? `<button class="btn dan ghost full" data-act="excluirContagem" data-cid="${h.id}">Excluir contagem</button>` : ''}
-  </div>`;
+    ${cards}
+    ${ehGestor() && ambAtivos().some((a) => !(h.ambientes || []).includes(a.id)) ? `<button class="btn full" data-act="incluirAmb" style="border-style:dashed">+ Incluir outro ambiente</button>` : ''}
+  </div>
+  ${ehGestor() ? `<div class="bar"><div class="in"><button class="btn big pri" data-act="finalizarRapido" ${carregado ? '' : 'disabled'}>Finalizar contagem${totT ? ` · ${totC}/${totT}` : ''}</button></div></div>` : ''}`;
 };
 ACT.trocarNome = async () => {
   const v = await pedirNome(true);
@@ -1028,32 +1060,33 @@ function statusDot(it) {
 VIEWS.amb = (r) => {
   const h = contagem(r.cid);
   if (!h) return `${topbar({ back: '#/', title: 'Contagem não encontrada' })}`;
-  if (fechadaStatus(h.status)) { AFTER.push(() => go(`#/c/${h.id}/resumo`)); return ''; }
+  if (fechadaStatus(h.status)) { AFTER.push(() => go(ehGestor() ? `#/c/${h.id}/resumo` : '#/')); return ''; }
   const ctx = ctxAtual();
   const nome = ambNome(r.amb, h);
   const lista = ctx.itens(r.amb);
   const pr = progresso(lista);
-  const cats = [...new Set(lista.map((x) => x.categoria))];
-  return `${topbar({ back: `#/c/${h.id}`, eyebrow: esc(nome), title: `Contagem ${dataBR(h.data)}`,
-    extra: `<div style="margin-top:10px" class="stack">
-      <div class="row small"><span class="grow"><b class="num">${pr.contados}</b> de <span class="num">${pr.total}</span> contados</span>${pr.conv ? `<span class="pill p-warn">${pr.conv} cálculo pendente</span>` : ''}</div>
-      <div class="prog"><i style="width:${pr.pct}%"></i></div></div>` })}
-  <div class="stack" style="margin-top:14px">
-    <div class="search">${ICON.search}<input id="busca" type="search" data-in="busca" placeholder="Buscar por nome ou código" value="${esc(S.ui.busca)}" autocomplete="off"></div>
-    <select id="cat" data-ch="cat" aria-label="Filtrar por categoria"><option value="">Todas as categorias</option>${cats.map((c) => `<option ${S.ui.cat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
-    <div class="seg" role="tablist">${[['pend', `Pendentes (${pr.total - pr.contados})`], ['cont', `Contados (${pr.contados})`], ['todos', 'Todos']].map(([k, l]) =>
-      `<button data-act="filtro" data-k="${k}" class="${S.ui.filtro === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-    <div id="lst">${listaHTML(lista, r)}</div>
-  </div>
-  <div class="bar"><div class="in"><button class="btn big" data-act="go" data-to="#/c/${h.id}/revisao">Revisar contagem</button></div></div>`;
+  S.ui.filtro = 'todos'; S.ui.cat = '';
+  return `${topbar({ back: `#/c/${h.id}`, eyebrow: `${pr.contados} de ${pr.total} contados`, title: esc(nome),
+    extra: `<div class="prog" style="margin-top:10px"><i style="width:${pr.pct}%"></i></div>
+      <div class="srch">${ICON.search}<input id="busca" type="search" data-in="busca" placeholder="Buscar produto" value="${esc(S.ui.busca)}" autocomplete="off"></div>` })}
+  <div id="lst">${listaHTML(lista, r)}</div>
+  <div class="bar"><div class="in"><button class="btn big pri" data-act="concluirAmb">Concluir ${esc(nome)}</button></div></div>`;
+};
+ACT.concluirAmb = () => {
+  const ctx = ctxAtual(); if (!ctx) return;
+  const pr = progresso(ctx.itens(R.amb));
+  const falta = pr.total - pr.contados;
+  toast(falta ? `${ambNome(R.amb, ctx.h)} salvo · ${falta} ${falta === 1 ? 'item ficou' : 'itens ficaram'} sem contar` : `${ambNome(R.amb, ctx.h)} concluído ✓`, 3000);
+  S.ui.busca = '';
+  go(`#/c/${R.cid}`);
 };
 function listaHTML(lista, r) {
   const f = filtrarItens(lista);
-  if (!f.length) return `<div class="card muted" style="text-align:center">${S.ui.filtro === 'pend' && !S.ui.busca && !S.ui.cat ? 'Tudo contado neste ambiente ✓' : 'Nenhum item encontrado.'}</div>`;
+  if (!f.length) return `<div class="card muted" style="text-align:center;margin-top:14px">Nenhum produto encontrado.</div>`;
   let out = '', cat = null, open = false;
   const buscando = !!S.ui.busca.trim();
   if (buscando) {
-    out += `<div class="small muted" style="margin:10px 0 6px">${f.length} resultado${f.length > 1 ? 's' : ''} para “${esc(S.ui.busca.trim())}” · contados e pendentes</div><div class="list">`;
+    out += `<div class="list" style="margin-top:14px">`;
     open = true; cat = '\u0000';
   }
   for (const it of f) {
@@ -1066,13 +1099,13 @@ function listaHTML(lista, r) {
     const aberto = S.ui.abKey === it.key;
     const ab = it.forma === 'fechadas' ? '' :
       `<button class="btn qab ${rr.nAbertas ? 'pri' : ''} ${aberto ? 'on' : ''}" data-act="togAb" data-key="${esc(it.key)}" aria-expanded="${aberto}" aria-label="Ver abertas de ${esc(it.descricao)}">${ICON.garrafa}${rr.nAbertas ? `<b>${rr.nAbertas}</b>` : ''}</button>
-       <button class="btn qadd" data-act="gqaddFast" data-key="${esc(it.key)}" aria-label="Adicionar mais uma aberta de ${esc(it.descricao)}">${ICON.mais}</button>`;
-    out += `<div class="li qrow ${rr.status !== 'nao_contado' ? 'feito' : ''}">
-      ${statusDot(it)}
+`;
+    const nomeAct = ehGestor() ? 'abrirItem' : it.forma === 'fechadas' ? 'focoQtd' : 'togAb';
+    out += `<div class="li qrow ${rr.status !== 'nao_contado' ? 'feito' : ''}" data-key="${esc(it.key)}">
       <button class="qthumb" data-act="fotoItem" data-key="${esc(it.key)}" aria-label="Foto de ${esc(it.descricao)}">${miniHTML(it)}</button>
-      <button class="qname" data-act="abrirItem" data-key="${esc(it.key)}">
-        <span class="nm">${esc(it.descricao)}${it.varNome ? ` · <span class="muted">${esc(it.varNome)}</span>` : ''}</span><br>
-        <span class="meta">${esc(it.codigo)} · ${it.unidade}${rr.status === 'sem_estoque' ? ' · sem estoque' : ''}${rr.pendencias.length && rr.status !== 'nao_contado' ? ' · cálculo pendente' : ''}</span>
+      <button class="qname" data-act="${nomeAct}" data-key="${esc(it.key)}">
+        <span class="nm">${esc(it.descricao)}${it.varNome ? ` · <span class="muted">${esc(it.varNome)}</span>` : ''}</span>
+        ${rr.status === 'sem_estoque' ? '<br><span class="meta">sem estoque</span>' : ''}
       </button>
       <input class="qin" id="q-${esc(it.key)}" inputmode="numeric" pattern="[0-9]*" data-ch="qf" data-key="${esc(it.key)}"
         value="${esc(val)}" placeholder="—" aria-label="Fechadas de ${esc(it.descricao)}" autocomplete="off">
@@ -1126,6 +1159,7 @@ INP.qf = (el) => {
   clearTimeout(debounceQ[key]);
   salvarQtd(key, pf.value, el);
 };
+ACT.focoQtd = (el) => { const i = document.getElementById('q-' + el.dataset.key); if (i) { i.focus(); i.select && i.select(); } };
 ACT.qstep = (el) => {
   const key = el.dataset.key, d = Number(el.dataset.d);
   const inp = document.getElementById('q-' + key); if (!inp) return;
@@ -1154,12 +1188,12 @@ function painelAbertas(it) {
     </div>`;
   }).join('');
   return `<div class="abpanel">
-    <div class="row between" style="gap:8px;flex-wrap:wrap">
+    ${!ehGestor() ? '' : `<div class="row between" style="gap:8px;flex-wrap:wrap">
       <div class="small grow ${isNum(p.taraG) ? 'muted' : ''}" style="${isNum(p.taraG) ? '' : 'color:var(--amber)'}">
         ${isNum(p.taraG) ? `Tara ${F(p.taraG)} g descontada de cada ${E.s}.` : 'Tara não cadastrada — o peso líquido fica pendente.'}
       </div>
       <button class="btn ghost small" style="min-height:40px;flex:0 0 auto" data-act="salvarTara" data-key="${esc(it.key)}">${isNum(p.taraG) ? 'Mudar tara' : 'Cadastrar tara'}</button>
-    </div>
+    </div>`}
     ${linhas || '<div class="small muted">Nenhuma pesagem lançada.</div>'}
     <div class="row">
       <button class="btn grow" data-act="gqadd" data-key="${esc(it.key)}">+ ${it.forma === 'peso' ? 'Pesagem' : cap(E.s) + ' aberta'}</button>
@@ -1173,6 +1207,10 @@ function abResumo(g, it) {
   if (pb.empty) return '<span class="muted">digite o peso da balança</span>';
   const a = Calc.aberta({ b: pb.value, t: g.t }, it.p, it.unidade);
   if (a.erro) return `<span style="color:var(--danger)">${esc(a.erro)}</span>`;
+  if (!ehGestor()) {
+    if (it.unidade === 'KG') return isNum(a.kg) ? `<span class="muted">${FA(a.kg, 3)} kg</span>` : '<span class="muted">peso anotado</span>';
+    return isNum(a.volumeMl) ? `<span class="muted">${F(a.volumeMl)} ml na garrafa</span>` : '<span class="muted">peso anotado</span>';
+  }
   const partes = [];
   if (it.unidade === 'KG') { if (isNum(a.kg)) partes.push(`${FA(a.kg, 3)} kg`); }
   else if (isNum(a.volumeMl)) partes.push(`${F(a.volumeMl)} ml na garrafa${isNum(a.fracao) ? ` · ${F(a.fracao * 100)}% de ${F(it.p.volumeMl)} ml` : ''}`);
@@ -1400,7 +1438,7 @@ ACT.incluirAmb = async () => {
     });
     const loc = S.contagens.find((c) => c.id === h.id);
     if (loc) {
-      loc.ambientes = [...(loc.ambientes || []), ...novos.map((a) => a.id)];
+      loc.ambientes = [...new Set([...(loc.ambientes || []), ...novos.map((a) => a.id)])];
       loc.ambNomes = { ...(loc.ambNomes || {}), ...Object.fromEntries(novos.map((a) => [a.id, a.nome])) };
     }
     novos.forEach((a) => assinarLanc(h.id, a.id));
@@ -1875,6 +1913,67 @@ ACT.finalizar = async (el) => {
   finally { S.saving = false; }
 };
 
+/* ---- Finalizar com um botão: fecha e já gera a planilha ---- */
+ACT.finalizarRapido = async (el) => {
+  if (!ehGestor()) return toast('Só o gestor finaliza a contagem');
+  if (S.saving) return;
+  const h = contagem(S.cur.cid); const ctx = ctxAtual(); if (!h || !ctx) return;
+  if ((h.ambientes || []).some((a) => !S.cur.lancOk[a])) return toast('Carregando lançamentos… tente de novo');
+  const P = pendenciasCtx(ctx);
+  const parcial = !!(P.nc || P.conv);
+  const ok = await modal({ title: 'Finalizar contagem?',
+    body: parcial ? `<p>${P.nc ? `<b>${P.nc}</b> ${P.nc === 1 ? 'item não foi contado' : 'itens não foram contados'}` : ''}${P.nc && P.conv ? ' e ' : ''}${P.conv ? `<b>${P.conv}</b> ${P.conv === 1 ? 'item está' : 'itens estão'} sem tara ou volume cadastrado` : ''}. ${P.nc + P.conv === 1 ? 'Ele sai' : 'Eles saem'} como pendente na planilha.</p>
+      <label class="check"><input type="checkbox" id="m-ok"> Finalizar mesmo assim</label>`
+      : '<p>Tudo contado. A contagem fica travada e a planilha Excel é gerada em seguida.</p>',
+    actions: [{ label: 'Finalizar e gerar planilha', cls: 'pri', value: true, check: (m) => !parcial || m.querySelector('#m-ok').checked || (toast('Marque a confirmação'), false) },
+      { label: 'Cancelar', value: false, cls: 'ghost' }] });
+  if (!ok) return;
+  const snap = { v: {}, amb: {}, criadoEm: Date.now(), por: S.me || '' };
+  for (const a of ctx.ambs) {
+    const lista = ctx.itens(a.id);
+    snap.amb[a.id] = { nome: a.nome, itens: lista.map((it) => ({ k: it.key, forma: it.forma })) };
+    for (const it of lista) {
+      if (!snap.v[it.key]) snap.v[it.key] = { codigo: it.codigo, descricao: it.descricao, varNome: it.varNome || '', varNomeFull: it.varNomeFull || it.varNome || '',
+        categoria: it.categoria, unidade: it.unidade, formaProd: it.formaProd || it.forma, embalagem: it.embalagem, params: it.p };
+    }
+  }
+  S.saving = true; S.ui.finalizando = true; render();
+  const lancCopia = JSON.parse(JSON.stringify(S.cur.lanc));
+  try {
+    await comSync(async () => {
+      await S.db.doc(`contagens/${h.id}/snap/params`).set(snap);
+      await S.db.doc(`contagens/${h.id}`).update({
+        status: parcial ? 'parcial' : 'finalizada', finalizadoEm: Date.now(), finalizadoPor: S.me || '', obsEnc: '',
+        resumoEnc: { naoContados: P.nc, calcPendentes: P.conv, alertas: P.alert,
+          porAmb: Object.fromEntries(ctx.ambs.map((a) => [a.id, { contados: P.porAmb[a.id].pr.contados, total: P.porAmb[a.id].pr.total, nc: P.porAmb[a.id].nc.length, conv: P.porAmb[a.id].conv.length }])) },
+        eventos: [...(h.eventos || []), { t: Date.now(), p: S.me || '', d: parcial ? `Encerrada com pendências (${P.nc} não contados, ${P.conv} cálculos pendentes)` : 'Finalizada' }].slice(-50),
+        atualizadoEm: Date.now(),
+      });
+    });
+  } catch (e) { toast(errMsg(e), 4000); S.saving = false; S.ui.finalizando = false; render(); return; }
+  S.saving = false;
+  const ctxFim = ctxDe({ ...h, status: parcial ? 'parcial' : 'finalizada' }, lancCopia, snap);
+  let msgDrive = '';
+  if (window.claude && window.claude.use) try {
+    const rd = await enviarContagemDrive(ctxFim, S.user.nome);
+    msgDrive = rd.ok ? 'Planilha enviada ao Drive ✓' : rd.fila ? `Drive: ficou na fila (${rd.msg})` : `Drive: ${rd.msg}`;
+  } catch (e) { msgDrive = 'Drive: não foi possível enviar — tente pelo Histórico'; }
+  if (msgDrive) toast(msgDrive, 5000);
+  try {
+    if (!S.dl) throw new Error('download indisponível nesta visualização');
+    await carregarLib('ExcelJS');
+    const { wb, nome } = await gerarWorkbook(ctxFim, 'todos');
+    const buf = await wb.xlsx.writeBuffer();
+    await S.dl.save({ filename: nome, data: new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }) });
+    toast(msgDrive ? msgDrive + ' · planilha baixada' : 'Planilha baixada ✓', 5000);
+  } catch (e) {
+    if (e && e.code === 'declined') toast(msgDrive || 'Download cancelado — gere de novo pelo Histórico', 5000);
+    else { console.error(e); toast('Contagem salva, mas a planilha não saiu: ' + ((e && e.message) || e) + '. Gere pelo Histórico.', 6000); }
+  }
+  S.ui.finalizando = false;
+  go('#/');
+};
+
 /* ---- Reabrir uma contagem encerrada para editar ---- */
 ACT.reabrir = async (el) => {
   if (!ehGestor()) return toast('Só o gestor reabre uma contagem');
@@ -2297,8 +2396,8 @@ async function gerarWorkbook(ctx, scope) {
   wp.columns.forEach((c, i) => { c.width = i === 1 ? 44 : i === 10 ? 40 : 16; });
   wp.autoFilter = { from: { row: 2, column: 1 }, to: { row: wp.rowCount, column: ph.length } };
 
-  const sufixo = scope === 'todos' ? '' : '_' + ambs[0].nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, '_');
-  return { wb, nome: `Contagem_Bebidas_Amauri_${h.data}${sufixo}.xlsx` };
+  const sufixo = scope === 'todos' ? '' : ' - ' + ambs[0].nome.replace(/[\\/:*?"<>|]+/g, ' ').trim();
+  return { wb, nome: `${(h.data || '').split('-').reverse().join('-')} CONTAGEM BEBIDA${sufixo}.xlsx` };
 }
 
 /* ===== Histórico e comparação ===== */
@@ -2313,7 +2412,7 @@ VIEWS.hist = () => {
   }).sort((a, b) => (b.data || '').localeCompare(a.data || '') || (b.criadoEm || 0) - (a.criadoEm || 0));
   const todosAmb = [...new Set(S.contagens.flatMap((c) => c.ambientes || []))];
   const sel = u.cmpSel.filter((id) => contagem(id));
-  return `${topbar({ back: '#/', eyebrow: 'Contagens anteriores', title: 'Histórico' })}
+  return `${topbar({ back: '#/gestao', eyebrow: 'Contagens anteriores', title: 'Histórico' })}
   <div class="stack" style="margin-top:14px">
     <div class="grid2">
       <label class="f">De<input type="date" id="h-de" data-ch="hf" data-k="hDe" value="${esc(u.hDe)}"></label>
@@ -2426,7 +2525,7 @@ function cadTabs(tab) {
 }
 VIEWS.cad = (r) => {
   const tab = r.tab;
-  const head = `${topbar({ back: '#/', eyebrow: 'Cadastro', title: tab === 'amb' ? 'Ambientes' : tab === 'equipe' ? 'Equipe' : tab === 'imp' ? 'Importar planilha' : tab === 'teste' ? 'Testar cálculo' : 'Produtos' })}${cadTabs(tab)}`;
+  const head = `${topbar({ back: '#/gestao', eyebrow: 'Cadastro', title: tab === 'amb' ? 'Ambientes' : tab === 'equipe' ? 'Equipe' : tab === 'imp' ? 'Importar planilha' : tab === 'teste' ? 'Testar cálculo' : 'Produtos' })}${cadTabs(tab)}`;
   if (tab === 'equipe') return head + viewEquipe();
   if (tab === 'amb') return head + viewAmbientes();
   if (tab === 'imp') return head + viewImportar();
@@ -3092,3 +3191,4 @@ ACT.salvarConfig = () => {
 };
 
 boot();
+

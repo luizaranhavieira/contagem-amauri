@@ -263,3 +263,19 @@ input.qin{width:58px}
 .ambx{position:absolute;top:6px;right:6px;z-index:2;width:28px;height:28px;border:0;border-radius:8px;background:transparent;color:var(--muted);opacity:.45;font-size:12px;line-height:1;cursor:pointer;transition:opacity .12s ease,color .12s ease}
 .ambx:hover{opacity:.9}
 .ambx:active{opacity:1;color:var(--danger);background:var(--surface-2)}
+/* ===== Modo minimalista ===== */
+.top .srch{margin-top:10px;position:relative}
+.top .srch input{background:#FFFDF0;border-color:transparent;padding-left:40px;min-height:46px;color:#14241A}
+.top .srch svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#5A6A5C}
+.gear{position:absolute;top:14px;right:14px;z-index:2;width:40px;height:40px;border-radius:50%;border:1px solid rgba(236,239,177,.35);background:transparent;color:var(--cream);font-size:19px;cursor:pointer;display:grid;place-items:center;opacity:.8}
+.gear:active{background:rgba(236,239,177,.12)}
+.hero-min{padding:34px 20px 30px}
+.hero-min .logo{width:96px;height:96px;margin:4px auto 12px}
+.hero-min h1{font-size:28px}
+.qrow .qname .nm{font-size:16px}
+.qrow{min-height:64px}
+.ambgo h2{font-size:24px}
+.userline{display:flex;justify-content:center;gap:10px;align-items:center;font-size:14px;color:var(--muted);margin-top:16px}
+.userline button{background:none;border:0;color:var(--accent);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer;padding:6px}
+.feito-ok{color:var(--ok);font-weight:700;font-size:13px}
+.mgrid{display:flex;flex-direction:column;gap:10px}
