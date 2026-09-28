@@ -672,7 +672,7 @@ function render() {
     else if (!S.loaded.p || !S.loaded.a || !S.loaded.c || !S.loaded.u) html = `<div class="loading"><div><img src="${LOGO}" alt="Mercearia Amauri"><p class="eyebrow" style="margin-top:14px">Carregando contagem…</p></div></div>`;
     else if (!S.usuarios.length) html = VIEWS.primeiroAcesso();
     else if (!sessaoValida()) html = VIEWS.login();
-    else if (['cad', 'produto', 'ambiente', 'nova', 'gestao', 'hist', 'revisao', 'resumo', 'item', 'comparar'].includes(R.name) && !ehGestor()) html = semPermissao(R.name === 'nova' ? 'Iniciar contagem' : 'Área do gestor');
+    else if (['cad', 'produto', 'ambiente', 'gestao', 'hist', 'revisao', 'resumo', 'item', 'comparar'].includes(R.name) && !ehGestor()) html = semPermissao(R.name === 'nova' ? 'Iniciar contagem' : 'Área do gestor');
     else html = VIEWS[R.name] ? VIEWS[R.name](R) : VIEWS.home(R);
   } catch (e) {
     console.error(e);
@@ -793,8 +793,7 @@ VIEWS.home = () => {
     ${ehGestor() ? `<button class="btn big full cta" data-act="retomar" data-cid="${atual.id}">Retomar contagem</button>` : '<div class="small" style="opacity:.85">O gestor retoma a contagem.</div>'}`;
   else if (atual) corpo = `<button class="btn big full cta" data-act="go" data-to="#/c/${atual.id}">Contar</button>
     <div class="small" style="margin-top:10px;opacity:.8">Contagem de ${dataBR(atual.data)}</div>`;
-  else if (ehGestor()) corpo = `<button class="btn big full cta" data-act="go" data-to="#/nova" ${semProd ? 'disabled' : ''}>Iniciar contagem</button>`;
-  else corpo = `<div class="small" style="opacity:.85;margin-top:16px">Nenhuma contagem aberta. O gestor inicia a próxima.</div>`;
+  else corpo = `<button class="btn big full cta" data-act="go" data-to="#/nova" ${semProd ? 'disabled' : ''}>Iniciar contagem</button>`;
   return `<div class="hero-brand hero-min">
     ${ehGestor() ? `<button class="gear" data-act="go" data-to="#/gestao" aria-label="Área do gestor" title="Área do gestor">⚙</button>` : ''}
     <img class="logo" src="${LOGO}" alt="Mercearia Amauri">
@@ -878,7 +877,7 @@ VIEWS.nova = () => {
     <button class="btn big pri full" data-act="go" data-to="#/c/${ab.id}">Continuar essa contagem</button>
     <p class="small muted" style="margin:0">Para começar outra, finalize (em Revisar contagem) ou exclua a atual.</p>
   </div>`;
-  const n = S.ui.novo || (S.ui.novo = { data: hojeISO(), resp: S.me || '', ambs: [] });
+  const n = S.ui.novo || (S.ui.novo = { data: hojeISO(), resp: S.me || (S.user && S.user.nome) || '', ambs: [] });
   return `${topbar({ back: '#/', eyebrow: 'Nova contagem', title: 'Iniciar contagem' })}
   <div class="stack" style="margin-top:16px">
     <label class="f">Data da contagem<input type="date" id="n-data" data-in="novo" data-k="data" value="${esc(n.data)}"></label>
@@ -900,7 +899,6 @@ INP.novoAmb = (el) => {
   S.ui.novo.ambs = [...s];
 };
 ACT.criarContagem = async (btn) => {
-  if (!ehGestor()) return toast('Só o gestor inicia uma contagem');
   const n = S.ui.novo;
   if (!n.data) return toast('Informe a data da contagem');
   if (!n.resp.trim()) { toast('Informe o responsável'); $('#n-resp').focus(); return; }
