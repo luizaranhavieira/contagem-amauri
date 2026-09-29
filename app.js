@@ -147,8 +147,11 @@ const Calc = (() => {
         r.alertas.push(`Peso líquido (${fmt(r.liquidoG)} g) acima do peso líquido nominal (${fmt(p.pesoLiqG)} g).`);
       return r;
     }
-    // volume restante = peso líquido (diferença entre a garrafa aberta e a vazia)
-    r.volumeMl = r.liquidoG;
+    // volume restante: com a garrafa cheia de referência, proporção (aberta − vazia) ÷ (cheia − vazia) × volume;
+    // sem ela, diferença direta (1 g de bebida = 1 ml)
+    const cheia = isNum(p.pesoCheioG) && isNum(p.volumeMl) && p.volumeMl > 0 && p.pesoCheioG > tara ? p.pesoCheioG : null;
+    r.pesoCheioG = cheia;
+    r.volumeMl = cheia ? (r.liquidoG / (cheia - tara)) * p.volumeMl : r.liquidoG;
     if (isNum(p.volumeMl) && p.volumeMl > 0) {
       r.fracao = r.volumeMl / p.volumeMl;
       if (r.volumeMl > p.volumeMl + 1e-9)
@@ -2331,7 +2334,7 @@ async function gerarWorkbook(ctx, scope) {
   const dh = ['DATA', 'AMBIENTE', 'CÓDIGO', 'DESCRIÇÃO', 'VARIANTE', 'UNID. DE MEDIDA', 'EMBALAGEM', 'Nº', 'PESO DA GARRAFA ABERTA (g)', 'PESO DA GARRAFA VAZIA — TARA (g)',
     'LÍQUIDO NA GARRAFA (ml)', 'VOLUME NOMINAL (ml)', 'RESTANTE DA GARRAFA', 'EQUIV. UN. (estimativa)', 'QUILOS (kg)',
     'SITUAÇÃO / ALERTAS', 'REGISTRADO POR', 'REGISTRADO EM'];
-  wd.addRow([`Pesagens da contagem de ${dataBR(h.data)} — líquido na garrafa = peso da garrafa aberta − peso da garrafa vazia (fórmula na planilha)`]).font = { bold: true, size: 11 };
+  wd.addRow([`Pesagens da contagem de ${dataBR(h.data)} — líquido na garrafa = (aberta − vazia) ÷ (cheia − vazia) × volume nominal; sem peso da cheia, aberta − vazia (fórmula na planilha)`]).font = { bold: true, size: 11 };
   const wdh = wd.addRow(dh);
   wdh.eachCell((c) => {
     c.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
@@ -2355,7 +2358,7 @@ async function gerarWorkbook(ctx, scope) {
           [ar.erro, ...ar.pendencias, ...ar.alertas].filter(Boolean).join(' | ') || 'OK', e.p || '',
           e.u ? new Date(g.r || e.u).toLocaleString('pt-BR') : '']);
         const n = linhaD.number;
-        if (isNum(ar.volumeMl)) linhaD.getCell(11).value = { formula: `I${n}-J${n}`, result: r3(ar.volumeMl, 1) };
+        if (isNum(ar.volumeMl)) linhaD.getCell(11).value = { formula: isNum(ar.pesoCheioG) ? `(I${n}-J${n})/(${ar.pesoCheioG}-J${n})*L${n}` : `I${n}-J${n}`, result: r3(ar.volumeMl, 1) };
         if (isNum(ar.fracao)) linhaD.getCell(13).value = { formula: `K${n}/L${n}`, result: r3(ar.fracao, 4) };
         if (isNum(ar.equivUnid)) linhaD.getCell(14).value = { formula: `K${n}/L${n}`, result: r3(ar.equivUnid, 3) };
         if (isNum(ar.kg)) linhaD.getCell(15).value = { formula: `(I${n}-J${n})/1000`, result: r3(ar.kg, 3) };
@@ -2572,6 +2575,7 @@ ACT.cadFiltro = (el) => { S.ui.cadFiltro = el.dataset.k; render(); };
 const NUMF = [
   ['volumeMl', 'Volume nominal por embalagem', 'ml', 'Só a bebida que cabe na embalagem cheia (ex.: 750, 1000). Não some a tara aqui. Usada nas fechadas e para calcular quanto resta da garrafa.'],
   ['taraG', 'Tara — embalagem vazia', 'g', 'Peso da embalagem vazia, nas mesmas condições da pesagem.'],
+  ['pesoCheioG', 'Peso da embalagem cheia (fechada)', 'g', 'Garrafa cheia, lacrada. Com ele o restante sai pela proporção: (aberta − vazia) ÷ (cheia − vazia) × volume.'],
   ['pesoLiqG', 'Peso líquido nominal por embalagem', 'g', 'Para itens em KG (ex.: pacote de 1000 g).'],
 ];
 function novoProdutoVazio() {
@@ -2660,7 +2664,7 @@ function varHTML(d, v, ix) {
     </div>
     <div class="stack" style="gap:10px">${NUMF.map(([k, l, u, hint]) => `<label class="f">${l}<div class="unitwrap"><input id="v${ix}-${k}" inputmode="decimal" data-in="vn" data-ix="${ix}" data-k="${k}" value="${esc(v['_' + k] || '')}" class="${pend.has(need(k)) ? 'need' : ''}"><span class="u">${u}</span></div>
       <span class="hint">${v.notas && v.notas[k] ? `<b>${esc(v.notas[k])}.</b> ` : ''}${hint}</span></label>`).join('')}</div>
-    ${d.unidade !== 'KG' && d.forma !== 'fechadas' ? `<div class="small muted">Cálculo das abertas: <b>líquido na garrafa (ml) = peso da garrafa aberta − tara</b>. Sem a tara cadastrada, o app guarda o peso e marca “conversão pendente”.</div>` : ''}
+    ${d.unidade !== 'KG' && d.forma !== 'fechadas' ? `<div class="small muted">Cálculo das abertas: <b>restante (ml) = (aberta − vazia) ÷ (cheia − vazia) × volume nominal</b>. Sem o peso da cheia, usa aberta − vazia (1 g = 1 ml). Sem a tara cadastrada, o app guarda o peso e marca “conversão pendente”.</div>` : ''}
     <label class="check"><input type="checkbox" data-ch="vfc" data-ix="${ix}" data-k="ativo" ${v.ativo !== false ? 'checked' : ''}> Variante ativa</label>
     ${avisoVolume(d, v)}
     ${pend.size ? `<div class="note n-warn small">Falta: ${[...pend].join(', ')}</div>` : `<div class="note n-ok small">Parâmetros completos.</div>`}
